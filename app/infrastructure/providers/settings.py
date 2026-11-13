@@ -40,11 +40,11 @@ class AIProviderSettings(BaseSettings):
     reranker_base_url: str = ""
     verifier_base_url: str = ""
 
-    model_fast: str = "gemini-3.7-flash"
-    model_deep: str = "gemini-3.7-flash"
-    model_embedding: str = "gemini-embedding-2"
-    model_reranker: str = "gemini-3.7-flash"
-    model_verifier: str = "gemini-3.7-flash"
+    model_fast: str = "gemini-3.8-flash"
+    model_deep: str = "gemini-3.8-flash"
+    model_embedding: str = "gemini-embedding-001"
+    model_reranker: str = "gemini-3.8-flash"
+    model_verifier: str = "gemini-3.8-flash"
 
     embedding_dimensions: int = 3072
     embedding_batch_size: int = 64

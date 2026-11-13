@@ -41,6 +41,7 @@ frontend/.vite/
 frontend/*.local
 frontend/.env
 frontend/.env.*
+!frontend/.env.example
 
 # Editors and operating-system files
 .idea/

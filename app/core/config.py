@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     ] = "development"
     debug: bool = False
     api_prefix: str = "/v1"
+    api_host: str = "127.0.0.1"
+    api_port: int = 8001
+    api_reload: bool = False
 
     database_url: str = (
         "postgresql+psycopg://"
