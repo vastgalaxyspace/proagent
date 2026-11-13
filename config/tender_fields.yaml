@@ -1,0 +1,378 @@
+{
+  "schema_version": "rfp-field-schema.v1",
+  "schema_id": "tender-agent-reviewed-condensed-v2",
+  "prompt": "Build the effective tender facts from the base tender and all binding corrigenda, addenda, and issuer clarifications. Preserve exact values, conditions, exceptions, contradictions, required bidder proof, and page-level evidence. For grouped fields, return concise labelled items such as 'Bid number: ...' or 'Technical weight: ...'. Do not invent missing subfacts and do not treat bidder requests as amendments unless the issuer accepts them.",
+  "sections": [
+    {
+      "key": "tender_overview",
+      "label": "Tender Overview",
+      "prompt": "Resolve the tender's identity, scope, commercial basics, dates, locations, and procurement preferences.",
+      "fields": [
+        {
+          "key": "tender_summary",
+          "label": "Tender Summary",
+          "description": "Concise executive summary of the effective tender.",
+          "value_type": "string",
+          "prompt": "Summarize the buyer, procurement purpose, major scope and deliverables, locations, value and bid security when stated, submission deadline, evaluation method, and principal eligibility themes. Use only grounded facts and apply amendments.",
+          "retrieval_guidance": {
+            "aliases": ["tender summary", "executive summary", "procurement overview", "bid overview"],
+            "likely_sections": ["Cover Page", "Bid Details", "Notice Inviting Tender", "Scope of Work", "Tender Data Sheet", "Evaluation"]
+          }
+        },
+        {
+          "key": "tender_identity",
+          "label": "Tender Identity",
+          "description": "Official procurement numbers and issuing buyer.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled items for GeM Bid Number, buyer's internal tender/RFP/reference number, and the actual legal issuing organisation. Inspect the cover page and first page of every tender source before deciding. Never return generic portal labels such as Buyer Organization, Purchaser, Principal, Buyer, or Issuing Authority as the organisation; if no real organisation name is evidenced, abstain. If an official GeM bid is present, label its Bid Number as the canonical tender number while retaining the internal reference separately. Never use a corrigendum number, filename number, UUID, or portal database ID as the tender number.",
+          "retrieval_guidance": {
+            "aliases": ["gem bid", "ref gem bid", "bid number", "tender number", "rfp number", "reference number", "enquiry number", "buyer", "purchaser", "issuing authority", "organisation name", "organization name", "issued by"],
+            "anchor_phrases": ["gem bid", "bid number", "tender number", "rfp number", "invites bids", "invites proposals"],
+            "likely_sections": ["Cover Page", "Bid Details", "Notice Inviting Tender", "Invitation for Bids", "Tender Data Sheet"]
+          }
+        },
+        {
+          "key": "tender_subject_classification",
+          "label": "Tender Subject and Classification",
+          "description": "Official title, procurement route, category, and mixed scope.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled items for official title or name of work, tender/procurement type, procurement category, and material goods, licence, implementation, maintenance, support, works, or consultancy components. Treat the BOQ title or name of work as the overall tender subject. Never promote one BOQ line item, SKU, size, model, or variant to the primary procurement category; list those only as item categories.",
+          "retrieval_guidance": {
+            "aliases": ["tender title", "name of work", "boq title", "subject", "tender type", "procurement method", "product category", "service category"],
+            "likely_sections": ["Cover Page", "Bid Details", "Notice Inviting Tender", "Scope of Work", "Tender Data Sheet"]
+          }
+        },
+        {
+          "key": "estimated_procurement_value",
+          "label": "Estimated Procurement Value",
+          "description": "Stated estimated tender, project, procurement, or contract value.",
+          "value_type": "string_array",
+          "prompt": "Return the exact labelled estimated tender, project, procurement, or contract amount with currency and tax basis. Search cover pages, GeM Bid Details, tender data sheets, commercial schedules, special purchase conditions, and labelled table cells. Preserve multiple lots or components separately. If the document only says that an estimated value is indicated elsewhere without stating the amount, return not found. Do not infer an estimate from EMD, fees, turnover, quantities, or bidder prices.",
+          "retrieval_guidance": {
+            "aliases": ["estimated cost", "estimated value", "estimated bid value", "estimated contract value", "tender value", "total tender value", "project cost", "contract value", "value of procurement", "approximate value"],
+            "anchor_phrases": ["estimated bid value", "estimated tender value", "estimated procurement value", "estimated cost"],
+            "likely_sections": ["Cover Page", "Bid Details", "Notice Inviting Tender", "Tender Data Sheet", "Key Information", "Commercial", "Special Purchase Conditions"]
+          }
+        },
+        {
+          "key": "bid_security_and_fees",
+          "label": "Bid Security and Fees",
+          "description": "EMD, bid security, tender fee, processing fee, and related rules.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled items for EMD or bid-security amount, tender/document/processing fee, accepted instruments, issuer, validity and claim periods, payment channel, deadlines, exemptions, forfeiture or return rules, and every required proof document. Do not merge EMD with performance security.",
+          "retrieval_guidance": {
+            "aliases": ["emd", "earnest money", "bid security", "bid bond", "tender fee", "document fee", "processing fee"],
+            "anchor_phrases": ["emd amount", "earnest money", "bid security", "tender fee"],
+            "likely_sections": ["Bid Details", "Tender Data Sheet", "Bid Security", "Fees", "Instructions to Bidders"]
+          }
+        },
+        {
+          "key": "tender_timeline",
+          "label": "Tender Timeline",
+          "description": "Effective publication, submission, opening, and other controlling dates.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled effective dates and times for publication/issue, pre-bid events, submission deadline, technical opening, commercial opening, and other material milestones. Apply the latest binding extension and retain timezone or 'to be intimated later' wording.",
+          "retrieval_guidance": {
+            "aliases": ["publish date", "issue date", "bid submission end date", "closing date", "bid opening date", "technical bid opening", "commercial bid opening"],
+            "likely_sections": ["Bid Details", "Critical Dates", "Schedule", "Tender Data Sheet", "Corrigendum"]
+          }
+        },
+        {
+          "key": "work_delivery_location",
+          "label": "Work and Delivery Locations",
+          "description": "Service footprint, delivery sites, DC/DR sites, and other material location roles.",
+          "value_type": "string_array",
+          "prompt": "Return every material location with its role: work/service footprint, delivery site, buyer offices, DC, DR, resource deployment, or bid submission. Do not mistake letterhead or meeting addresses for service locations.",
+          "retrieval_guidance": {
+            "aliases": ["work location", "place of work", "delivery location", "project location", "data center", "data centre", "disaster recovery", "branches and offices"],
+            "likely_sections": ["Bid Details", "Scope of Work", "Project Location", "Delivery Schedule", "Hosting"]
+          }
+        },
+        {
+          "key": "mse_startup_policy",
+          "label": "MSE and Startup Policy",
+          "description": "MSE/MSME/startup eligibility relaxations, exemptions, and benefits.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled MSE/MSME and recognised-startup rules for turnover, experience, project value, bid security, fees, purchase preference, reserved share, scoring, registration class, exclusions, substitute declarations, post-award consequences, and required proof. Preserve an explicit absence of preference.",
+          "retrieval_guidance": {
+            "aliases": ["mse", "msme", "micro and small enterprise", "startup", "udyam", "nsic", "purchase preference", "emd exemption"],
+            "likely_sections": ["MSE Preference", "Startup Relaxation", "Eligibility", "Exemptions", "Purchase Preference"]
+          }
+        },
+        {
+          "key": "make_in_india_policy",
+          "label": "Make in India Policy",
+          "description": "Local-supplier and local-content preference requirements.",
+          "value_type": "string_array",
+          "prompt": "Return applicability, supplier class, minimum local-content percentage, margin of preference, purchase allocation, declaration, verification, auditor/certifier requirements, exemptions, and proof documents.",
+          "retrieval_guidance": {
+            "aliases": ["make in india", "local supplier", "local content", "class i supplier", "public procurement preference"],
+            "likely_sections": ["Make in India", "Purchase Preference", "Local Content", "Eligibility"]
+          }
+        }
+      ]
+    },
+    {
+      "key": "evaluation_and_participation",
+      "label": "Evaluation and Participation",
+      "prompt": "Resolve bidding structure, evaluation mechanics, award controls, participant eligibility, declarations, and financial or experience qualification.",
+      "fields": [
+        {
+          "key": "evaluation_method",
+          "label": "Evaluation Method",
+          "description": "Complete selection and evaluation method.",
+          "value_type": "string_array",
+          "prompt": "Return every evaluation stage and gate, including responsiveness, eligibility, technical, presentation/POC, commercial and final selection; identify L1, QCBS, LCS, highest score, item-wise, total-value-wise, or other method and preserve formulas, tie-breakers, rounding, normalization, outlier, arithmetic-correction, rejection, and amendment rules.",
+          "retrieval_guidance": {
+            "aliases": ["evaluation method", "evaluation methodology", "selection method", "l1", "qcbs", "least cost", "combined score"],
+            "likely_sections": ["Evaluation", "Award Criteria", "Tender Data Sheet", "Instructions to Bidders"]
+          }
+        },
+        {
+          "key": "bid_structure_and_auction",
+          "label": "Bid Structure and Auction",
+          "description": "Envelope structure, bidding system, bid parts, and auction rules.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled bid/envelope structure, one-stage/two-stage or one-cover/two-cover system, technical and commercial separation, alternative bids, and reverse-auction applicability. Treat an explicit field such as Bid to RA enabled: Yes/No as controlling. Do not infer reverse-auction participation from a generic mention of RA, auction, or commercial rules. Preserve auction rules and commercial quarantine controls separately.",
+          "retrieval_guidance": {
+            "aliases": ["bidding system", "two bid system", "two cover", "envelope", "reverse auction", "bid to ra enabled", "ra enabled", "auction enabled", "commercial bid"],
+            "likely_sections": ["Bid Details", "Submission Instructions", "Evaluation", "Reverse Auction"]
+          }
+        },
+        {
+          "key": "evaluation_scoring",
+          "label": "Evaluation Scoring",
+          "description": "Technical and financial weights, minimum scores, and score allocation.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled technical weight, financial weight, minimum technical qualifying score, section or subscore thresholds, total score, scoring bands, formulas, and revised allocations. Preserve percentages and points exactly.",
+          "retrieval_guidance": {
+              "aliases": ["technical weightage", "financial weightage", "minimum technical score", "qualifying score", "score allocation", "marks", "total marks", "total score", "vendor score", "technical audit checklist"],
+              "anchor_phrases": ["grand total", "total marks", "total score", "total / vendor score"],
+              "likely_sections": ["Technical Evaluation", "Financial Evaluation", "Scoring Matrix", "Technical Audit Checklist", "QCBS"]
+          }
+        },
+        {
+          "key": "highest_bid_elimination",
+          "label": "Highest-Bid Elimination",
+          "description": "Rules that eliminate or exclude highest financial bids or outliers.",
+          "value_type": "string_array",
+          "prompt": "State whether any highest-bid, H1, extreme-bid, abnormal-price, or outlier elimination applies, with thresholds, comparison group, exceptions, and effect on evaluation. Do not infer this from ordinary L1 selection.",
+          "retrieval_guidance": {
+            "aliases": ["h1 elimination", "highest bidder elimination", "highest bid", "outlier bid", "abnormally high bid"],
+            "likely_sections": ["Financial Evaluation", "Commercial Evaluation", "Award Criteria"]
+          }
+        },
+        {
+          "key": "purchase_preference_and_allocation",
+          "label": "Purchase Preference and Allocation",
+          "description": "Preference margins, order splitting, quantity allocation, and matching rules.",
+          "value_type": "string_array",
+          "prompt": "Return preference margin percentages, eligible classes, explicit reservation or non-reservation status, L1 matching bands, reserved shares, order or quantity splitting, allocation among bidders, tie rules, and conditions. Distinguish Reserved for MSE: Yes/No from ordinary MSE purchase preference and from Make-in-India preference. Keep MSE and Make-in-India labels explicit when applicable.",
+          "retrieval_guidance": {
+            "aliases": ["margin of purchase preference", "purchase preference", "reserved for mse", "mse reservation", "mse reserved", "order splitting", "quantity split", "l1 plus", "allocation"],
+            "anchor_phrases": ["reserved for mse", "purchase preference", "mse preference", "mii purchase preference"],
+            "likely_sections": ["Purchase Preference", "Award", "Order Allocation", "Special Conditions"]
+          }
+        },
+        {
+          "key": "permitted_participant_structure",
+          "label": "Permitted Participant Structure",
+          "description": "Allowed legal entities, consortiums, joint ventures, and bidding arrangements.",
+          "value_type": "string_array",
+          "prompt": "Return allowed bidder legal forms and explicit rules for consortium, joint venture, lead member, subcontracting, group companies, affiliates, OEM participation, and sole bidding. A prohibition is satisfied by confirming the bidder's structure, not by demanding a document unless the tender names one.",
+          "retrieval_guidance": {
+            "aliases": ["legal entity", "company", "partnership", "joint venture", "consortium", "lead bidder", "subcontracting", "oem"],
+            "likely_sections": ["Eligibility", "Bidder Qualification", "Consortium", "Instructions to Bidders"]
+          }
+        },
+        {
+          "key": "statutory_registrations",
+          "label": "Statutory Registrations",
+          "description": "Required bidder registrations, identifiers, licences, and tax records.",
+          "value_type": "string_array",
+          "prompt": "Return every required registration or identifier with applicability, validity, issuing authority, jurisdiction, and proof: PAN, GSTIN/GST, CIN, Udyam/MSME, EPF, ESIC, labour licence, professional tax, sector licence, and any other named registration. Do not limit the result to this example list.",
+          "retrieval_guidance": {
+            "aliases": ["pan", "gst", "gstin", "cin", "udyam", "msme registration", "epf", "esic", "registration certificate", "licence"],
+            "likely_sections": ["Eligibility", "Documents Required", "Statutory Compliance", "Bid Forms"]
+          }
+        },
+        {
+          "key": "digital_signing",
+          "label": "Digital Signing",
+          "description": "Digital-signature, signing-authority, and authorization requirements.",
+          "value_type": "string_array",
+          "prompt": "Return DSC class/type, portal-signing rules, authorized signatory requirements, power of attorney or board authorization, wet-signature exceptions, and required proof.",
+          "retrieval_guidance": {
+            "aliases": ["digital signature", "dsc", "authorized signatory", "authorised signatory", "power of attorney", "board resolution"],
+            "likely_sections": ["Bid Submission", "Signing of Bid", "Instructions to Bidders", "Forms"]
+          }
+        },
+        {
+          "key": "debarment_and_blacklisting",
+          "label": "Debarment and Blacklisting",
+          "description": "Debarment, blacklisting, conflict, fraud, and related eligibility declarations.",
+          "value_type": "string_array",
+          "prompt": "Return covered entities, authorities, lookback period, present/past status, conflicts, insolvency/fraud restrictions, required affidavit or self-declaration, format, signatory, notarization, and consequences.",
+          "retrieval_guidance": {
+            "aliases": ["blacklisted", "blacklisting", "debarred", "debarment", "fraud", "conflict of interest", "affidavit"],
+            "likely_sections": ["Eligibility", "Declarations", "Bid Forms", "Integrity"]
+          }
+        },
+        {
+          "key": "contractual_declarations",
+          "label": "Contractual Declarations",
+          "description": "Tender forms, declarations, undertakings, NDA, integrity pact, and acceptance documents.",
+          "value_type": "string_array",
+          "prompt": "Return every mandatory declaration, undertaking, tender form, unconditional acceptance, no-deviation statement, land-border declaration, NDA, integrity pact, code of integrity, conflict statement, and named annexure with execution timing, stamp/notary/witness/signature requirements, and applicability.",
+          "retrieval_guidance": {
+            "aliases": ["declaration", "undertaking", "tender form", "nda", "non disclosure agreement", "integrity pact", "no deviation", "land border"],
+            "likely_sections": ["Forms", "Declarations", "Integrity Pact", "NDA", "Documents Required"]
+          }
+        },
+        {
+          "key": "financial_capacity",
+          "label": "Financial Capacity",
+          "description": "Turnover, net worth, profitability, solvency, and other financial thresholds.",
+          "value_type": "string_array",
+          "prompt": "Return separately labelled threshold, averaging method, financial years, entity scope, positive-net-worth or profitability rule, relaxations, CA/statutory-auditor certification, audited statements, and other required proof. An exemption is applicable only when the effective tender explicitly says Yes or describes the relaxation; an explicit No overrides generic policy language. Do not infer thresholds.",
+          "retrieval_guidance": {
+            "aliases": ["turnover", "average annual turnover", "net worth", "profit", "solvency", "financial capacity", "audited balance sheet"],
+            "likely_sections": ["Financial Eligibility", "Pre-Qualification", "Eligibility Criteria", "Documents Required"]
+          }
+        },
+        {
+          "key": "minimum_industry_experience",
+          "label": "Minimum Industry Experience",
+          "description": "Minimum years and nature of relevant bidder or team experience.",
+          "value_type": "string_array",
+          "prompt": "Return years, relevant domain/service, bidder versus personnel applicability, uninterrupted-operation requirement, customer/sector scope, lookback period, relaxations, and proof. Do not convert project counts into years.",
+          "retrieval_guidance": {
+            "aliases": ["years of experience", "industry experience", "relevant experience", "experience in providing", "minimum experience"],
+            "likely_sections": ["Experience Criteria", "Technical Eligibility", "Pre-Qualification"]
+          }
+        },
+        {
+          "key": "similar_project_qualification",
+          "label": "Similar-Project Qualification",
+          "description": "Counts, values, milestones, and definitions for qualifying similar work.",
+          "value_type": "string_array",
+          "prompt": "Return each alternative qualification route with project/client count, monetary or percentage threshold, similarity definition, customer/sector, completion or go-live status, lookback period, use-case/transaction/branch threshold, relaxations, and every named proof such as work orders, completion certificates, service reports, or client references. Keep scored examples separate from mandatory eligibility.",
+          "retrieval_guidance": {
+            "aliases": ["similar work", "similar project", "past project", "past performance", "work order", "completion certificate", "client reference"],
+            "likely_sections": ["Experience Criteria", "Similar Work", "Technical Eligibility", "Pre-Qualification"]
+          }
+        }
+      ]
+    },
+    {
+      "key": "compliance_and_technology",
+      "label": "Compliance and Technology",
+      "prompt": "Resolve certifications, government assurance, hosting, ownership, security, regulation, delivery capacity, technology constraints, and solution capability.",
+      "fields": [
+        {
+          "key": "third_party_certification_assurance",
+          "label": "Third-Party Certification and Assurance",
+          "description": "Open-ended third-party certifications and assurance reports required from bidder, OEM, product, service, or facility.",
+          "value_type": "string_array",
+          "prompt": "Find every explicitly required third-party certification or assurance, not only common examples. Return the exact standard/report and version or level, holder (bidder/OEM/product/DC/service), scope, accreditation, validity, one-of alternatives, submission timing, and proof. Examples include ISO/IEC standards, CMMI, SOC 1/2, PCI DSS, CSA STAR, accessibility, quality, safety, environment, privacy, continuity, and sector-specific assurance.",
+          "retrieval_guidance": {
+            "aliases": ["certification", "certificate", "iso", "iec", "cmmi", "soc 1", "soc 2", "pci dss", "csa star", "accreditation", "assurance report"],
+            "anchor_phrases": ["certified", "certification", "accredited", "assurance report"],
+            "likely_sections": ["Certifications", "Technical Eligibility", "Pre-Qualification", "Compliance", "Hosting"]
+          }
+        },
+        {
+          "key": "government_audit_testing_empanelment",
+          "label": "Government Audit, Testing, and Empanelment",
+          "description": "Named government empanelment, audit, testing, and certification requirements.",
+          "value_type": "string_array",
+          "prompt": "Return explicit CERT-In auditor/safe-to-host, STQC/GIGW, MeitY empanelment, government cloud, government laboratory/testing, regulator-approved auditor, or similar government assurance requirements with scope, timing, holder, validity, alternatives, and proof. Generic VAPT or quality language is not CERT-In/STQC unless explicitly named.",
+          "retrieval_guidance": {
+            "aliases": ["cert-in", "safe to host", "stqc", "gigw", "meity empanelled", "government testing", "empanelled auditor"],
+            "anchor_phrases": ["cert-in", "safe to host", "stqc", "standardisation testing", "meity empanelled"],
+            "likely_sections": ["Security Audit", "Quality Certification", "Hosting", "Technical Requirements", "Go-Live"]
+          }
+        },
+        {
+          "key": "hosting_and_data_residency",
+          "label": "Hosting and Data Residency",
+          "description": "Deployment model, infrastructure responsibility, data geography, backup, and DR constraints.",
+          "value_type": "string_array",
+          "prompt": "Return production deployment model, on-premises/private/public/government cloud requirements, buyer-versus-bidder infrastructure responsibility, DC and DR, availability/RTO/RPO, and geographic rules for storage, processing, backup, logs, model data, and transfer. Apply clarifications over feature-matrix options.",
+          "retrieval_guidance": {
+            "aliases": ["hosting", "on premises", "private cloud", "public cloud", "data residency", "data localization", "data centre", "disaster recovery", "rto", "rpo"],
+            "likely_sections": ["Hosting", "Cloud", "Data Centre", "Data Security", "Technical Architecture"]
+          }
+        },
+        {
+          "key": "software_ownership_and_escrow",
+          "label": "Software Ownership and Escrow",
+          "description": "IPR, licensing, source-code custody/handover, and escrow obligations.",
+          "value_type": "string_array",
+          "prompt": "Return ownership, licence, assignment, reuse rights, third-party component treatment, source-code custody/handover, transition and termination duties, escrow contents, deposit frequency, agent, costs, and release conditions. Do not infer ownership from infringement indemnity alone.",
+          "retrieval_guidance": {
+            "aliases": ["intellectual property", "ipr", "source code ownership", "source code handover", "perpetual licence", "escrow"],
+            "likely_sections": ["Intellectual Property", "Source Code", "Escrow", "Contract Conditions", "Deliverables"]
+          }
+        },
+        {
+          "key": "cybersecurity_controls",
+          "label": "Cybersecurity Controls",
+          "description": "Technical and operational cyber, privacy, and information-security controls.",
+          "value_type": "string_array",
+          "prompt": "Return required control families and exact thresholds for identity/access, encryption/key management, secure development, VAPT, SOC/SIEM, logging, monitoring, incident response, vulnerability/patch management, backup, business continuity, privacy engineering, data protection, network/end-point security, audit, and evidence. Distinguish controls from certifications and laws.",
+          "retrieval_guidance": {
+            "aliases": ["cyber security", "information security", "encryption", "access control", "vapt", "siem", "incident response", "vulnerability management", "business continuity"],
+            "likely_sections": ["Cyber Security", "Information Security", "Data Protection", "Technical Requirements"]
+          }
+        },
+        {
+          "key": "regulatory_and_statutory_obligations",
+          "label": "Regulatory and Statutory Obligations",
+          "description": "Open-ended laws, regulations, regulator directions, policies, and sector obligations.",
+          "value_type": "string_array",
+          "prompt": "Find every explicitly applicable law, rule, regulator direction/circular, government guideline, buyer policy, sector mandate, data-protection obligation, labour/tax obligation, and reporting duty. Return exact name, issuing authority, applicability, compliance timing, evidence, and amendment/substitution. Do not limit retrieval to RBI, MeitY, IT Act, or DPDP examples.",
+          "retrieval_guidance": {
+            "aliases": ["regulatory compliance", "statutory compliance", "applicable law", "rbi direction", "circular", "it act", "dpdp", "meity guideline", "government guideline"],
+            "anchor_phrases": ["applicable laws", "statutory", "regulatory", "shall comply"],
+            "likely_sections": ["Compliance", "Legal", "Cyber Security", "Data Protection", "Special Conditions"]
+          }
+        },
+        {
+          "key": "delivery_capability_and_infrastructure",
+          "label": "Delivery Capability and Infrastructure",
+          "description": "People, facilities, references, authorizations, support, and capacity proof.",
+          "value_type": "string_array",
+          "prompt": "Return every bid-stage proof of delivery capacity: bidder organisation profile, manufacturing facility or service offices, plant/site audit, production capacity, machinery and equipment, raw-material capability, resource plan, manpower strength, CVs and personnel certifications, laboratories/tools, service references, deployment summaries, OEM/manufacturer authorization, technical literature, BOM/sizing, escalation matrix, support model, implementation plan, and continuity capacity. Also preserve explicit delivery periods, call-off or call-up quantities, quantity tolerances, plant-wise schedules, and readiness obligations when they affect the bidder's ability to perform. Preserve thresholds and required artifacts; do not stop after finding only manpower or one capability sentence.",
+          "retrieval_guidance": {
+            "aliases": ["technical capability", "organizational profile", "organisation profile", "manufacturing facility", "manufacturing plant", "production capacity", "plant audit", "technical audit", "machinery", "equipment", "raw material", "resource plan", "manpower", "service support", "service reference", "manufacturer authorization", "bill of material", "escalation matrix", "delivery period", "call off", "call up", "quantity tolerance"],
+            "anchor_phrases": ["manufacturing facility", "technical audit", "equipment machinery", "production capacity", "organisation profile"],
+            "likely_sections": ["Technical Eligibility", "Bid Qualification Criteria", "Resources", "Infrastructure", "Manufacturing", "Technical Audit", "Documents Required", "Scope of Work"]
+          }
+        },
+        {
+          "key": "technology_constraints",
+          "label": "Technology Constraints",
+          "description": "Mandatory or preferred technologies, platforms, standards, integration, and no-lock-in rules.",
+          "value_type": "string_array",
+          "prompt": "Return mandatory versus preferred platforms, languages, frameworks, products, open-source obligations, equivalent-technology allowances, no-lock-in rules, architecture/deployment constraints, interfaces/APIs, interoperability, low-code/no-code, sizing/BOM duties, and buyer-supplied versus bidder-supplied components.",
+          "retrieval_guidance": {
+            "aliases": ["technology stack", "platform", "programming language", "framework", "open source", "vendor lock in", "integration", "api"],
+            "likely_sections": ["Technical Specifications", "Technology Architecture", "Scope of Work", "Solution Requirements"]
+          }
+        },
+        {
+          "key": "solution_capabilities",
+          "label": "Solution Capabilities",
+          "description": "Major mandatory and scored functional or technical capabilities.",
+          "value_type": "string_array",
+          "prompt": "Return complete capability families with controlling mandatory/scored/preferred status and material thresholds. Cover functional features, performance, capacity, automation/AI, workflow, reporting, integration, migration, support, demonstrations/POC, technical presentations, architecture walkthroughs, delivery plans, and required compliance/evidence annexures. Apply formal deletions and revisions.",
+          "retrieval_guidance": {
+            "aliases": ["solution features", "functional requirements", "technical specifications", "solution capabilities", "scope of work", "system shall support", "proof of concept", "demonstration"],
+            "likely_sections": ["Functional Requirements", "Technical Specifications", "Scope of Work", "Solution Requirements", "Technical Evaluation"]
+          }
+        }
+      ]
+    }
+  ]
+}

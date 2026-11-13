@@ -1,0 +1,20 @@
+policy_id: tender-coverage-policy
+policy_version: "1.0"
+
+required_requirement_categories:
+  - eligibility
+  - submission
+  - technical
+  - commercial
+  - compliance
+  - evaluation
+
+minimum_field_coverage: 0.80
+minimum_requirement_evidence_coverage: 0.90
+minimum_readiness_score: 75.0
+
+weights:
+  field_coverage: 40.0
+  category_coverage: 20.0
+  evidence_coverage: 30.0
+  review_quality: 10.0

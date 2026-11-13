@@ -1,0 +1,64 @@
+schema_id: tender-requirement-catalog
+schema_version: "1.0"
+
+categories:
+  - key: eligibility
+    label: Eligibility Requirements
+    description: >
+      Bidder qualification rules such as legal status,
+      registrations, turnover, experience, certifications,
+      blacklisting, conflict-of-interest, and consortium rules.
+    retrieval_query: >
+      bidder eligibility qualification turnover experience
+      registration certification blacklisting consortium joint
+      venture minimum eligibility criteria required proof
+
+  - key: submission
+    label: Submission Requirements
+    description: >
+      Documents, declarations, forms, signatures, formats,
+      envelopes, portals, and deadlines required for bid submission.
+    retrieval_query: >
+      bid submission required documents forms declarations
+      certificates upload envelope signature digital signature
+      deadline document checklist
+
+  - key: technical
+    label: Technical Requirements
+    description: >
+      Technical specifications, scope, deliverables, service levels,
+      implementation, staffing, infrastructure, and acceptance rules.
+    retrieval_query: >
+      technical specification scope of work deliverables SLA
+      implementation schedule manpower resources infrastructure
+      acceptance criteria mandatory technical requirement
+
+  - key: commercial
+    label: Commercial Requirements
+    description: >
+      Pricing, taxes, payment, bid security, performance security,
+      warranties, penalties, liquidated damages, and contract terms.
+    retrieval_query: >
+      commercial terms price tax payment terms EMD bid security
+      performance security warranty penalty liquidated damages
+      contract value financial requirement
+
+  - key: compliance
+    label: Compliance Requirements
+    description: >
+      Legal, regulatory, policy, security, privacy, labour,
+      environmental, localisation, and audit obligations.
+    retrieval_query: >
+      statutory compliance legal regulation policy security privacy
+      labour law environmental local content Make in India audit
+      mandatory compliance
+
+  - key: evaluation
+    label: Evaluation Requirements
+    description: >
+      Technical scoring, commercial evaluation, pass/fail rules,
+      demonstrations, presentations, proof of concept, and award rules.
+    retrieval_query: >
+      evaluation criteria technical score marks weightage pass fail
+      commercial evaluation QCBS L1 presentation demonstration
+      proof of concept award criteria
