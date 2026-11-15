@@ -71,28 +71,58 @@ def classification_node(
                 continue
 
             page_decisions = []
+            pages_by_source = defaultdict(list)
 
             for page, _document in document_rows:
-                decision = (
-                    classification_service.classify_page(
-                        page_id=page.id,
-                        page_number=page.page_number,
-                        source_name=page.source_name,
-                        text=page.extracted_text,
-                    )
+                pages_by_source[page.source_name].append(page)
+
+            for source_name, source_pages in pages_by_source.items():
+                ordered_pages = sorted(
+                    source_pages,
+                    key=lambda page: (
+                        page.source_page_number,
+                        page.page_number,
+                    ),
+                )
+                source_text = "\n\n".join(
+                    page.extracted_text
+                    for page in ordered_pages
+                    if page.extracted_text
+                )
+                inherited = classification_service.classify_source(
+                    source_name=source_name,
+                    text=source_text,
                 )
 
-                page_decisions.append(decision)
-                type_counts[decision.document_type] += 1
-                classified_page_count += 1
+                for page in ordered_pages:
+                    decision = classification_service.classify_page(
+                        page_id=page.id,
+                        page_number=page.source_page_number,
+                        source_name=page.source_name,
+                        text=page.extracted_text,
+                        inherited=inherited,
+                    )
 
-                if (
-                    decision.document_type == "unknown"
-                    or decision.confidence
-                    < classification_service
-                    .limits.minimum_confidence
-                ):
-                    review_page_ids.append(str(page.id))
+                    if (
+                        decision.classification_method
+                        == "deterministic_heading"
+                    ):
+                        inherited = (
+                            classification_service
+                            .source_from_boundary(decision)
+                        )
+
+                    page_decisions.append(decision)
+                    type_counts[decision.document_type] += 1
+                    classified_page_count += 1
+
+                    if (
+                        decision.document_type == "unknown"
+                        or decision.confidence
+                        < classification_service
+                        .limits.minimum_confidence
+                    ):
+                        review_page_ids.append(str(page.id))
 
             aggregate = (
                 classification_service.summarize_document(

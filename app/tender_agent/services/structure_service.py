@@ -113,6 +113,22 @@ class StructureService:
             return "non_consecutive_page"
 
         if (
+            previous_page.content_role
+            != current_page.content_role
+        ):
+            return "content_role_changed"
+
+        if (
+            previous_page.document_type
+            in {"corrigendum", "prebid_clarification"}
+            and current_page.document_type
+            == previous_page.document_type
+            and current_page.title
+            != previous_page.title
+        ):
+            return "amendment_title_changed"
+
+        if (
             current_page.classification_method
             == "deterministic_heading"
         ):

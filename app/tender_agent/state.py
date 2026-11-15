@@ -6,6 +6,21 @@ from typing import Annotated, Any, Literal
 from typing_extensions import TypedDict
 
 
+def merge_unique(
+    current: list[str],
+    new: list[str],
+) -> list[str]:
+    return list(
+        dict.fromkeys(
+            [
+                *(current or []),
+                *(new or []),
+            ]
+        )
+    )
+
+
+
 WorkflowStatus = Literal[
     "received",
     "loading",
@@ -53,13 +68,26 @@ WorkflowStatus = Literal[
     "rejected",
 ]
 
-
 class TenderAgentState(TypedDict, total=False):
     request_id: str
     tender_id: str
     tender_version_id: str
     operation_id: str
     document_ids: list[str]
+
+    completed_nodes: Annotated[
+        list[str],
+        merge_unique,
+    ]
+    skipped_nodes: Annotated[
+        list[str],
+        merge_unique,
+    ]
+    failed_node: str | None
+    node_events: Annotated[
+        list[dict[str, Any]],
+        operator.add,
+    ]
 
     owner_tenant_id: str
     started_by_user_id: str
@@ -144,6 +172,8 @@ class TenderAgentState(TypedDict, total=False):
     source_plan_id: str
     primary_base_logical_document_id: str
     base_supporting_logical_document_ids: list[str]
+    authoritative_logical_document_ids: list[str]
+    excluded_reference_logical_document_ids: list[str]
     base_selection_confidence: float
     base_selection_needs_review: bool
 
@@ -153,6 +183,10 @@ class TenderAgentState(TypedDict, total=False):
     binding_amendment_logical_document_ids: list[str]
     review_amendment_logical_document_ids: list[str]
     effective_source_needs_review: bool
+    amendment_operation_count: int
+    validated_amendment_operation_count: int
+    review_amendment_operation_count: int
+    amendment_operations: list[dict[str, Any]]
 
     native_extraction_completed: bool
     extracted_document_ids: list[str]

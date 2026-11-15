@@ -4,6 +4,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -85,6 +86,7 @@ from app.infrastructure.storage.interface import (
     ObjectStorage,
     ObjectStorageError,
 )
+from app.infrastructure.queue import dispatch_tender_run
 from app.tender_agent.domain.exceptions import (
     InvalidUploadError,
     UploadTooLargeError,
@@ -288,6 +290,7 @@ def create_tender(
 def start_tender_run(
     tender_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     request_context: Annotated[
         RequestContext,
         Depends(get_request_context),
@@ -445,7 +448,6 @@ def start_tender_run(
         },
     )
 
-    operation_repository.mark_running(operation)
     session.commit()
 
     graph_config = {
@@ -458,6 +460,10 @@ def start_tender_run(
         "request_id": request_id,
         "tender_id": str(tender.id),
         "operation_id": str(operation.id),
+        "completed_nodes": [],
+        "skipped_nodes": [],
+        "failed_node": None,
+        "node_events": [],
         "warnings": [],
         "errors": [],
     }
@@ -475,6 +481,15 @@ def start_tender_run(
         "base_tender_service": base_tender_service,
         "amendment_service": amendment_service,
         "ocr_max_attempts": settings.ocr_max_attempts,
+        "ocr_failure_policy": (
+            settings.ocr_failure_policy
+            if settings.ocr_failure_policy != "auto"
+            else (
+                "fail"
+                if settings.app_environment == "production"
+                else "warn"
+            )
+        ),
         "retrieval_service": retrieval_service,
         "field_catalog": field_catalog,
         "understanding_service": understanding_service,
@@ -503,455 +518,17 @@ def start_tender_run(
     if ai_providers is not None:
         runtime_context["ai_providers"] = ai_providers
 
-    try:
-        result = graph.invoke(
-            initial_state,
-            config=graph_config,
-            context=runtime_context,
-        )
-
-    except Exception as exc:
-        operation_repository.mark_failed(
-            operation,
-            error_code="graph_execution_failed",
-            error_detail=str(exc),
-        )
-
-        audit_repository.record(
-            tenant_id=request_context.tenant_id,
-            actor_user_id=request_context.user_id,
-            event_type="tender.understanding.failed",
-            entity_type="operation",
-            entity_id=str(operation.id),
-            after={
-                "error_code": "graph_execution_failed",
-            },
-        )
-
-        session.commit()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Tender Agent execution failed.",
-        ) from exc
-
-    result_summary = {
-        "workflow_status": result.get("workflow_status"),
-        "current_node": result.get("current_node"),
-        "native_extraction_completed": result.get(
-            "native_extraction_completed",
-            False,
-        ),
-        "extracted_document_ids": result.get(
-            "extracted_document_ids",
-            [],
-        ),
-        "ocr_document_ids": result.get(
-            "ocr_document_ids",
-            [],
-        ),
-        "empty_document_ids": result.get(
-            "empty_document_ids",
-            [],
-        ),
-        "failed_document_ids": result.get(
-            "failed_document_ids",
-            [],
-        ),
-        "extracted_page_count": result.get(
-            "extracted_page_count",
-            0,
-        ),
-        "extracted_character_count": result.get(
-            "extracted_character_count",
-            0,
-        ),
-        "quality_assessment_completed": result.get(
-            "quality_assessment_completed",
-            False,
-        ),
-        "quality_page_count": result.get(
-            "quality_page_count",
-            0,
-        ),
-        "quality_passed_page_ids": result.get(
-            "quality_passed_page_ids",
-            [],
-        ),
-        "ocr_required_page_ids": result.get(
-            "ocr_required_page_ids",
-            [],
-        ),
-        "ocr_recovery_completed": result.get(
-            "ocr_recovery_completed",
-            False,
-        ),
-        "ocr_succeeded_page_ids": result.get(
-            "ocr_succeeded_page_ids",
-            [],
-        ),
-        "ocr_failed_page_ids": result.get(
-            "ocr_failed_page_ids",
-            [],
-        ),
-        "ocr_provider_name": result.get(
-            "ocr_provider_name"
-        ),
-        "classification_completed": result.get(
-            "classification_completed",
-            False,
-        ),
-        "classified_document_ids": result.get(
-            "classified_document_ids",
-            [],
-        ),
-        "classified_page_count": result.get(
-            "classified_page_count",
-            0,
-        ),
-        "classification_review_page_ids": result.get(
-            "classification_review_page_ids",
-            [],
-        ),
-        "document_type_counts": result.get(
-            "document_type_counts",
-            {},
-        ),
-        "post_base_document_ids": result.get(
-            "post_base_document_ids",
-            [],
-        ),
-        "structure_completed": result.get(
-            "structure_completed",
-            False,
-        ),
-        "logical_document_ids": result.get(
-            "logical_document_ids",
-            [],
-        ),
-        "logical_document_count": result.get(
-            "logical_document_count",
-            0,
-        ),
-        "structured_page_count": result.get(
-            "structured_page_count",
-            0,
-        ),
-        "structure_review_logical_document_ids": result.get(
-            "structure_review_logical_document_ids",
-            [],
-        ),
-        "logical_document_type_counts": result.get(
-            "logical_document_type_counts",
-            {},
-        ),
-        "base_selection_completed": result.get(
-            "base_selection_completed",
-            False,
-        ),
-        "source_plan_id": result.get("source_plan_id"),
-        "primary_base_logical_document_id": result.get(
-            "primary_base_logical_document_id"
-        ),
-        "base_supporting_logical_document_ids": result.get(
-            "base_supporting_logical_document_ids",
-            [],
-        ),
-        "base_selection_confidence": result.get(
-            "base_selection_confidence",
-            0.0,
-        ),
-        "base_selection_needs_review": result.get(
-            "base_selection_needs_review",
-            False,
-        ),
-        "amendment_resolution_completed": result.get(
-            "amendment_resolution_completed",
-            False,
-        ),
-        "effective_source_member_ids": result.get(
-            "effective_source_member_ids",
-            [],
-        ),
-        "effective_source_count": result.get(
-            "effective_source_count",
-            0,
-        ),
-        "binding_amendment_logical_document_ids": result.get(
-            "binding_amendment_logical_document_ids",
-            [],
-        ),
-        "review_amendment_logical_document_ids": result.get(
-            "review_amendment_logical_document_ids",
-            [],
-        ),
-        "effective_source_needs_review": result.get(
-            "effective_source_needs_review",
-            False,
-        ),
-        "retrieval_index_completed": result.get(
-            "retrieval_index_completed",
-            False,
-        ),
-        "retrieval_index_id": result.get(
-            "retrieval_index_id"
-        ),
-        "retrieval_chunk_count": result.get(
-            "retrieval_chunk_count",
-            0,
-        ),
-        "retrieval_indexed_page_count": result.get(
-            "retrieval_indexed_page_count",
-            0,
-        ),
-        "retrieval_skipped_page_count": result.get(
-            "retrieval_skipped_page_count",
-            0,
-        ),
-        "retrieval_embedding_provider": result.get(
-            "retrieval_embedding_provider"
-        ),
-        "retrieval_embedding_model": result.get(
-            "retrieval_embedding_model"
-        ),
-        "retrieval_embedding_dimensions": result.get(
-            "retrieval_embedding_dimensions",
-            0,
-        ),
-        "retrieval_reranker_provider": result.get(
-            "retrieval_reranker_provider"
-        ),
-        "retrieval_reranker_model": result.get(
-            "retrieval_reranker_model"
-        ),
-        "field_understanding_completed": result.get(
-            "field_understanding_completed",
-            False,
-        ),
-        "field_understanding_run_id": result.get(
-            "field_understanding_run_id"
-        ),
-        "configured_field_count": result.get(
-            "configured_field_count",
-            0,
-        ),
-        "found_field_count": result.get(
-            "found_field_count",
-            0,
-        ),
-        "not_found_field_count": result.get(
-            "not_found_field_count",
-            0,
-        ),
-        "ambiguous_field_count": result.get(
-            "ambiguous_field_count",
-            0,
-        ),
-        "field_error_count": result.get(
-            "field_error_count",
-            0,
-        ),
-        "field_review_keys": result.get(
-            "field_review_keys",
-            [],
-        ),
-        "normalization_completed": result.get(
-            "normalization_completed",
-            False,
-        ),
-        "normalization_run_id": result.get(
-            "normalization_run_id"
-        ),
-        "normalized_field_count": result.get(
-            "normalized_field_count",
-            0,
-        ),
-        "unavailable_field_count": result.get(
-            "unavailable_field_count",
-            0,
-        ),
-        "normalization_candidate_count": result.get(
-            "normalization_candidate_count",
-            0,
-        ),
-        "normalization_error_count": result.get(
-            "normalization_error_count",
-            0,
-        ),
-        "normalization_review_field_keys": result.get(
-            "normalization_review_field_keys",
-            [],
-        ),
-        "reconciliation_completed": result.get(
-            "reconciliation_completed",
-            False,
-        ),
-        "reconciled_field_count": result.get(
-            "reconciled_field_count",
-            0,
-        ),
-        "conflict_field_count": result.get(
-            "conflict_field_count",
-            0,
-        ),
-        "unresolved_field_count": result.get(
-            "unresolved_field_count",
-            0,
-        ),
-        "conflict_field_keys": result.get(
-            "conflict_field_keys",
-            [],
-        ),
-        "reconciliation_review_field_keys": result.get(
-            "reconciliation_review_field_keys",
-            [],
-        ),
-        "requirement_extraction_completed": result.get(
-            "requirement_extraction_completed",
-            False,
-        ),
-        "requirement_run_id": result.get(
-            "requirement_run_id"
-        ),
-        "requirement_count": result.get(
-            "requirement_count",
-            0,
-        ),
-        "mandatory_requirement_count": result.get(
-            "mandatory_requirement_count",
-            0,
-        ),
-        "conditional_requirement_count": result.get(
-            "conditional_requirement_count",
-            0,
-        ),
-        "informational_requirement_count": result.get(
-            "informational_requirement_count",
-            0,
-        ),
-        "requirement_evidence_validated": result.get(
-            "requirement_evidence_validated",
-            False,
-        ),
-        "validated_requirement_count": result.get(
-            "validated_requirement_count",
-            0,
-        ),
-        "review_requirement_count": result.get(
-            "review_requirement_count",
-            0,
-        ),
-        "invalid_requirement_count": result.get(
-            "invalid_requirement_count",
-            0,
-        ),
-        "requirement_review_codes": result.get(
-            "requirement_review_codes",
-            [],
-        ),
-        "invalid_requirement_codes": result.get(
-            "invalid_requirement_codes",
-            [],
-        ),
-        "profile_projection_completed": result.get(
-            "profile_projection_completed",
-            False,
-        ),
-        "projected_field_count": result.get(
-            "projected_field_count",
-            0,
-        ),
-        "projected_requirement_count": result.get(
-            "projected_requirement_count",
-            0,
-        ),
-        "coverage_audit_completed": result.get(
-            "coverage_audit_completed",
-            False,
-        ),
-        "readiness_score": result.get(
-            "readiness_score",
-            0.0,
-        ),
-        "coverage_issue_count": result.get(
-            "coverage_issue_count",
-            0,
-        ),
-        "coverage_warning_count": result.get(
-            "coverage_warning_count",
-            0,
-        ),
-        "coverage_error_count": result.get(
-            "coverage_error_count",
-            0,
-        ),
-        "coverage_fatal_count": result.get(
-            "coverage_fatal_count",
-            0,
-        ),
-        "final_validation_completed": result.get(
-            "final_validation_completed",
-            False,
-        ),
-        "final_validation_status": result.get(
-            "final_validation_status"
-        ),
-        "ready_for_review": result.get(
-            "ready_for_review",
-            False,
-        ),
-        "review_reasons": result.get(
-            "review_reasons",
-            [],
-        ),
-        "final_persistence_completed": result.get(
-            "final_persistence_completed",
-            False,
-        ),
-        "finalization_run_id": result.get(
-            "finalization_run_id"
-        ),
-        "warnings": result.get("warnings", []),
-        "errors": result.get("errors", []),
-    }
-
-    interrupted = bool(result.get("__interrupt__"))
-
-    if result.get("workflow_status") == "failed":
-        operation_repository.mark_failed(
-            operation,
-            error_code="graph_validation_failed",
-            error_detail="Tender Agent validation failed.",
-            result=result_summary,
-        )
-
-        event_type = "tender.understanding.failed"
-    elif interrupted:
-        result_summary["workflow_status"] = "awaiting_review"
-        result_summary["current_node"] = "review_handoff"
-        operation_repository.mark_awaiting_review(
-            operation,
-            result=result_summary,
-        )
-        event_type = "tender.review.awaiting"
-    else:
-        operation_repository.mark_succeeded(
-            operation,
-            result=result_summary,
-        )
-
-        event_type = "tender.understanding.succeeded"
-
-    audit_repository.record(
+    dispatch_tender_run(
+        background_tasks=background_tasks,
+        operation_id=operation.id,
         tenant_id=request_context.tenant_id,
-        actor_user_id=request_context.user_id,
-        event_type=event_type,
-        entity_type="operation",
-        entity_id=str(operation.id),
-        after=result_summary,
+        user_id=request_context.user_id,
+        graph=graph,
+        graph_config=graph_config,
+        initial_state=initial_state,
+        runtime_context=runtime_context,
+        session_factory=session_factory,
     )
-
-    session.commit()
 
     status_url = str(
         request.url_for(
@@ -964,7 +541,7 @@ def start_tender_run(
         operation_id=operation.id,
         thread_id=thread_id,
         request_id=request_id,
-        workflow_status=result_summary.get("workflow_status", "failed"),
+        workflow_status=OperationStatus.QUEUED.value,
         status_url=status_url,
     )
 
@@ -1088,6 +665,19 @@ def decide_tender_review(
         {
             "workflow_status": result.get("workflow_status", decision.decision),
             "current_node": result.get("current_node", "review_handoff"),
+            "completed_nodes": result.get(
+                "completed_nodes",
+                result_summary.get("completed_nodes", []),
+            ),
+            "skipped_nodes": result.get(
+                "skipped_nodes",
+                result_summary.get("skipped_nodes", []),
+            ),
+            "failed_node": result.get("failed_node"),
+            "node_events": result.get(
+                "node_events",
+                result_summary.get("node_events", []),
+            ),
             "review_handoff_completed": result.get("review_handoff_completed", True),
             "review_session_id": result.get("review_session_id", str(review.id)),
             "review_status": decision.decision,
@@ -1186,6 +776,31 @@ def get_tender_run_status(
         document_ids=(
             state.get("document_ids")
             or [str(document.id) for document in documents]
+        ),
+        completed_nodes=(
+            state.get("completed_nodes")
+            or persisted_result.get(
+                "completed_nodes",
+                [],
+            )
+        ),
+        skipped_nodes=(
+            state.get("skipped_nodes")
+            or persisted_result.get(
+                "skipped_nodes",
+                [],
+            )
+        ),
+        failed_node=(
+            state.get("failed_node")
+            or persisted_result.get("failed_node")
+        ),
+        node_events=(
+            state.get("node_events")
+            or persisted_result.get(
+                "node_events",
+                [],
+            )
         ),
         retrieval_index_completed=(
             state.get("retrieval_index_completed")
@@ -1870,6 +1485,22 @@ def get_tender_run_status(
                 [],
             )
         ),
+        authoritative_logical_document_ids=(
+            state.get("authoritative_logical_document_ids")
+            or persisted_result.get(
+                "authoritative_logical_document_ids",
+                [],
+            )
+        ),
+        excluded_reference_logical_document_ids=(
+            state.get(
+                "excluded_reference_logical_document_ids"
+            )
+            or persisted_result.get(
+                "excluded_reference_logical_document_ids",
+                [],
+            )
+        ),
         base_selection_confidence=(
             state.get("base_selection_confidence")
             if state.get("base_selection_confidence") is not None
@@ -1932,6 +1563,43 @@ def get_tender_run_status(
             else persisted_result.get(
                 "effective_source_needs_review",
                 False,
+            )
+        ),
+        amendment_operation_count=(
+            state.get("amendment_operation_count")
+            if state.get("amendment_operation_count") is not None
+            else persisted_result.get(
+                "amendment_operation_count",
+                0,
+            )
+        ),
+        validated_amendment_operation_count=(
+            state.get("validated_amendment_operation_count")
+            if state.get(
+                "validated_amendment_operation_count"
+            )
+            is not None
+            else persisted_result.get(
+                "validated_amendment_operation_count",
+                0,
+            )
+        ),
+        review_amendment_operation_count=(
+            state.get("review_amendment_operation_count")
+            if state.get(
+                "review_amendment_operation_count"
+            )
+            is not None
+            else persisted_result.get(
+                "review_amendment_operation_count",
+                0,
+            )
+        ),
+        amendment_operations=(
+            state.get("amendment_operations")
+            or persisted_result.get(
+                "amendment_operations",
+                [],
             )
         ),
         completed=operation_complete,

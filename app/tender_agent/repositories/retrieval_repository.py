@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -14,6 +15,7 @@ from app.infrastructure.database.models import (
     RetrievalIndex,
     TenderSourcePlan,
     TenderSourcePlanMember,
+    TenderAmendmentOperation,
 )
 from app.tender_agent.domain.retrieval import (
     RetrievalBuildResult,
@@ -33,6 +35,24 @@ class RetrievalRepository:
         source_plan_id: UUID,
         tenant_id: str,
     ) -> list[RetrievalSourcePage]:
+        operation_statement = select(
+            TenderAmendmentOperation
+        ).where(
+            TenderAmendmentOperation.source_plan_id
+            == source_plan_id,
+            TenderAmendmentOperation.validation_status
+            == "validated",
+        )
+        operations_by_page: dict[UUID, list] = {}
+
+        for operation in self.session.scalars(
+            operation_statement
+        ):
+            operations_by_page.setdefault(
+                operation.page_id,
+                [],
+            ).append(operation)
+
         statement = (
             select(
                 TenderSourcePlanMember,
@@ -91,10 +111,34 @@ class RetrievalRepository:
         ):
             page_text = (
                 page.ocr_text
-                if page.ocr_status == "completed"
+                if page.ocr_status == "succeeded"
                 and page.ocr_text
                 else page.extracted_text
             )
+            amendment_annotations = [
+                (
+                    "[VALIDATED AMENDMENT] "
+                    f"operation={operation.operation}; "
+                    f"target={operation.target}; "
+                    "previous_value="
+                    f"{json.dumps(operation.previous_value_json, ensure_ascii=False, default=str)}; "
+                    "revised_value="
+                    f"{json.dumps(operation.revised_value_json, ensure_ascii=False, default=str)}; "
+                    f"evidence={operation.evidence_quote}"
+                )
+                for operation in operations_by_page.get(
+                    page.id,
+                    [],
+                )
+            ]
+
+            if amendment_annotations:
+                page_text = "\n".join(
+                    [
+                        *amendment_annotations,
+                        page_text or "",
+                    ]
+                ).strip()
             pages.append(
                 RetrievalSourcePage(
                     source_plan_id=source_plan_id,

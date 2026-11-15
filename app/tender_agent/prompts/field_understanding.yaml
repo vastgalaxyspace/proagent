@@ -36,6 +36,10 @@ system_prompt: |
   13. Do not merge two conflicting values into one sentence.
   14. When returning a string_array, retain meaningful labels such
       as "Submission deadline", "Technical weight", or "EMD amount".
+  15. A [VALIDATED AMENDMENT] annotation is a grounded precedence
+      instruction. Apply its operation, but cite the exact source
+      wording from the same chunk rather than generated annotation
+      metadata.
 
   Return one JSON object with exactly these properties:
 

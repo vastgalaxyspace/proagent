@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     )
 
     reconciliation_minimum_confidence: float = 0.65
+    amendment_minimum_confidence: float = 0.70
+    amendment_max_source_characters: int = 30_000
 
     max_upload_files: int = 100
     max_upload_file_bytes: int = 50 * 1024 * 1024
@@ -96,6 +98,11 @@ class Settings(BaseSettings):
     ocr_max_noise_ratio: float = 0.15
     ocr_min_accepted_score: float = 0.40
     ocr_max_attempts: int = 2
+    ocr_failure_policy: Literal[
+        "auto",
+        "warn",
+        "fail",
+    ] = "auto"
 
     requirement_dictionary_path: Path = Path(
         "config/requirement_dictionary.yaml"

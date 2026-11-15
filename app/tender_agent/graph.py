@@ -9,6 +9,7 @@ from app.tender_agent.nodes.base_tender import base_tender_node
 from app.tender_agent.nodes.classification import (
     classification_node,
 )
+from app.tender_agent.tracking import tracked_node
 from app.tender_agent.nodes.evidence_validation import (
     evidence_validation_node,
 )
@@ -77,6 +78,7 @@ from app.tender_agent.routing import (
     route_after_profile_projection,
 )
 from app.tender_agent.state import TenderAgentState
+from app.tender_agent.tracking import tracked_node
 
 
 def build_tender_graph(
@@ -88,62 +90,144 @@ def build_tender_graph(
         context_schema=TenderRuntimeContext,
     )
 
-    builder.add_node("load_context", load_context_node)
-    builder.add_node("inventory", inventory_node)
-    builder.add_node("preflight", preflight_node)
-    builder.add_node("native_extraction", native_extraction_node)
+    builder.add_node(
+        "load_context",
+        tracked_node("load_context", load_context_node),
+    )
+    builder.add_node(
+        "inventory",
+        tracked_node("inventory", inventory_node),
+    )
+    builder.add_node(
+        "preflight",
+        tracked_node(
+            "preflight",
+            preflight_node,
+            uses_runtime=False,
+        ),
+    )
+    builder.add_node(
+        "native_extraction",
+        tracked_node(
+            "native_extraction",
+            native_extraction_node,
+        ),
+    )
     builder.add_node(
         "quality_assessment",
-        quality_assessment_node,
+        tracked_node(
+            "quality_assessment",
+            quality_assessment_node,
+        ),
     )
-    builder.add_node("ocr_recovery", ocr_recovery_node)
-    builder.add_node("classification", classification_node)
-    builder.add_node("structure", structure_node)
-    builder.add_node("base_tender", base_tender_node)
-    builder.add_node("amendments", amendments_node)
-    builder.add_node("retrieval", retrieval_node)
+    builder.add_node(
+        "ocr_recovery",
+        tracked_node("ocr_recovery", ocr_recovery_node),
+    )
+    builder.add_node(
+        "classification",
+        tracked_node("classification", classification_node),
+    )
+    builder.add_node(
+        "structure",
+        tracked_node("structure", structure_node),
+    )
+    builder.add_node(
+        "base_tender",
+        tracked_node("base_tender", base_tender_node),
+    )
+    builder.add_node(
+        "amendments",
+        tracked_node("amendments", amendments_node),
+    )
+    builder.add_node(
+        "retrieval",
+        tracked_node("retrieval", retrieval_node),
+    )
     builder.add_node(
         "field_understanding",
-        field_understanding_node,
+        tracked_node(
+            "field_understanding",
+            field_understanding_node,
+        ),
     )
-    builder.add_node("mark_ready", mark_ready_node)
-    builder.add_node("mark_failed", mark_failed_node)
+    builder.add_node(
+        "mark_ready",
+        tracked_node(
+            "mark_ready",
+            mark_ready_node,
+            uses_runtime=False,
+            terminal=True,
+        ),
+    )
+    builder.add_node(
+        "mark_failed",
+        tracked_node(
+            "mark_failed",
+            mark_failed_node,
+            uses_runtime=False,
+            terminal=True,
+        ),
+    )
 
     builder.add_node(
         "requirement_matrix",
-        requirement_matrix_node,
+        tracked_node(
+            "requirement_matrix",
+            requirement_matrix_node,
+        ),
     )
     builder.add_node(
         "evidence_validation",
-        evidence_validation_node,
+        tracked_node(
+            "evidence_validation",
+            evidence_validation_node,
+        ),
     )
     builder.add_node(
         "profile_projection",
-        profile_projection_node,
+        tracked_node(
+            "profile_projection",
+            profile_projection_node,
+        ),
     )
     builder.add_node(
         "coverage_audit",
-        coverage_audit_node,
+        tracked_node(
+            "coverage_audit",
+            coverage_audit_node,
+        ),
     )
     builder.add_node(
         "final_validation",
-        final_validation_node,
+        tracked_node(
+            "final_validation",
+            final_validation_node,
+        ),
     )
     builder.add_node(
         "persistence",
-        persistence_node,
+        tracked_node("persistence", persistence_node),
     )
-    builder.add_node("review_handoff", review_handoff_node)
-
+    builder.add_node(
+        "review_handoff",
+        tracked_node(
+            "review_handoff",
+            review_handoff_node,
+        ),
+    )
 
     builder.add_node(
         "normalization",
-        normalization_node,
+        tracked_node("normalization", normalization_node),
     )
 
     builder.add_node(
         "reconciliation",
-        reconciliation_node,
+        tracked_node(
+            "reconciliation",
+            reconciliation_node,
+        ),
     )
 
     builder.add_edge(START, "load_context")

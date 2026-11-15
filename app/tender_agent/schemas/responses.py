@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -59,6 +60,16 @@ class TenderRunStatus(BaseModel):
     request_id: str
     tender_version_id: UUID
     document_ids: list[str]
+    completed_nodes: list[str] = Field(
+        default_factory=list
+    )
+    skipped_nodes: list[str] = Field(
+        default_factory=list
+    )
+    failed_node: str | None = None
+    node_events: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
     retrieval_index_completed: bool = False
     retrieval_index_id: str | None = None
     retrieval_chunk_count: int = 0
@@ -219,6 +230,12 @@ class TenderRunStatus(BaseModel):
     base_supporting_logical_document_ids: list[str] = Field(
         default_factory=list
     )
+    authoritative_logical_document_ids: list[str] = Field(
+        default_factory=list
+    )
+    excluded_reference_logical_document_ids: list[str] = Field(
+        default_factory=list
+    )
     base_selection_confidence: float = 0.0
     base_selection_needs_review: bool = False
 
@@ -234,6 +251,12 @@ class TenderRunStatus(BaseModel):
         default_factory=list
     )
     effective_source_needs_review: bool = False
+    amendment_operation_count: int = 0
+    validated_amendment_operation_count: int = 0
+    review_amendment_operation_count: int = 0
+    amendment_operations: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
 
     completed: bool
     warnings: list[str] = Field(default_factory=list)

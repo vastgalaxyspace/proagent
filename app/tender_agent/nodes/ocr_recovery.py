@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import UUID
 
 from langgraph.runtime import Runtime
+from sqlalchemy.orm import Session
 
 from app.tender_agent.context import TenderRuntimeContext
 from app.tender_agent.repositories.document_repository import (
@@ -27,6 +29,10 @@ def ocr_recovery_node(
     minimum_accepted_score = runtime.context[
         "ocr_min_accepted_score"
     ]
+    failure_policy = runtime.context.get(
+        "ocr_failure_policy",
+        "warn",
+    )
 
     candidate_ids = state.get(
         "ocr_required_page_ids",
@@ -45,18 +51,72 @@ def ocr_recovery_node(
         }
 
     if not provider.is_available():
+        warnings = [
+            "OCR is required, but the configured OCR provider "
+            "is unavailable. Continuing with readable pages; "
+            "affected pages require human review."
+        ]
+
+        affected_document_ids: set[UUID] = set()
+
+        for page_id_text in candidate_ids:
+            page_id = UUID(page_id_text)
+
+            with session_factory() as session:
+                repository = DocumentRepository(session)
+                row = repository.get_page_for_tenant(
+                    page_id=page_id,
+                    tenant_id=tenant_id,
+                )
+
+                if row is None:
+                    warnings.append(
+                        f"OCR page was not found: {page_id_text}"
+                    )
+                    continue
+
+                page, document = row
+                affected_document_ids.add(document.id)
+                repository.save_ocr_failure(
+                    page=page,
+                    error=(
+                        "The configured OCR provider is unavailable."
+                    ),
+                )
+                session.commit()
+
+        _rebuild_affected_documents(
+            session_factory=session_factory,
+            tenant_id=tenant_id,
+            document_ids=affected_document_ids,
+            max_document_characters=runtime.context[
+                "max_document_characters"
+            ],
+        )
+
+        fail_workflow = failure_policy == "fail"
+
         return {
-            "ocr_recovery_completed": False,
+            "ocr_recovery_completed": not fail_workflow,
             "ocr_succeeded_page_ids": [],
             "ocr_failed_page_ids": candidate_ids,
             "ocr_provider_name": provider.name,
-            "workflow_status": "failed",
+            "workflow_status": (
+                "failed" if fail_workflow else "ocr_completed"
+            ),
             "current_node": "ocr_recovery",
-            "next_action": "mark_failed",
-            "errors": [
-                "OCR is required, but the configured OCR "
-                "provider is unavailable."
-            ],
+            "next_action": (
+                "mark_failed" if fail_workflow else "classification"
+            ),
+            "warnings": warnings,
+            "errors": (
+                [
+                    "OCR failed for every candidate page and the "
+                    "OCR failure policy is set to fail."
+                ]
+                if fail_workflow
+                else []
+            ),
         }
 
     recovery_service = OCRRecoveryService(
@@ -169,10 +229,56 @@ def ocr_recovery_node(
                     f"OCR failed for page {page_id_text}: {exc}"
                 )
 
+    _rebuild_affected_documents(
+        session_factory=session_factory,
+        tenant_id=tenant_id,
+        document_ids=affected_document_ids,
+        max_document_characters=runtime.context[
+            "max_document_characters"
+        ],
+    )
+
+    fail_workflow = bool(
+        failure_policy == "fail"
+        and failed_ids
+        and not succeeded_ids
+    )
+
+    return {
+        "ocr_recovery_completed": not fail_workflow,
+        "ocr_succeeded_page_ids": succeeded_ids,
+        "ocr_failed_page_ids": failed_ids,
+        "ocr_provider_name": provider.name,
+        "workflow_status": (
+            "failed" if fail_workflow else "ocr_completed"
+        ),
+        "current_node": "ocr_recovery",
+        "next_action": (
+            "mark_failed" if fail_workflow else "classification"
+        ),
+        "warnings": warnings,
+        "errors": (
+            [
+                "OCR failed for every candidate page and the "
+                "OCR failure policy is set to fail."
+            ]
+            if fail_workflow
+            else []
+        ),
+    }
+
+
+def _rebuild_affected_documents(
+    *,
+    session_factory: Callable[[], Session],
+    tenant_id: str,
+    document_ids: set[UUID],
+    max_document_characters: int,
+) -> None:
     with session_factory() as session:
         repository = DocumentRepository(session)
 
-        for document_id in affected_document_ids:
+        for document_id in document_ids:
             document = repository.get_for_tenant(
                 document_id=document_id,
                 tenant_id=tenant_id,
@@ -181,20 +287,7 @@ def ocr_recovery_node(
             if document is not None:
                 repository.rebuild_document_extraction(
                     document=document,
-                    max_characters=runtime.context[
-                        "max_document_characters"
-                    ],
+                    max_characters=max_document_characters,
                 )
 
         session.commit()
-
-    return {
-        "ocr_recovery_completed": True,
-        "ocr_succeeded_page_ids": succeeded_ids,
-        "ocr_failed_page_ids": failed_ids,
-        "ocr_provider_name": provider.name,
-        "workflow_status": "ocr_completed",
-        "current_node": "ocr_recovery",
-        "next_action": "classification",
-        "warnings": warnings,
-    }

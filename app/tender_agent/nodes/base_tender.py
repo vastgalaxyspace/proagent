@@ -78,6 +78,16 @@ def base_tender_node(
             for logical_document_id
             in selection.supporting_logical_document_ids
         ],
+        "authoritative_logical_document_ids": [
+            str(logical_document_id)
+            for logical_document_id
+            in selection.authoritative_logical_document_ids
+        ],
+        "excluded_reference_logical_document_ids": [
+            str(logical_document_id)
+            for logical_document_id
+            in selection.excluded_reference_logical_document_ids
+        ],
         "base_selection_confidence": (
             selection.confidence
         ),

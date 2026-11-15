@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 
@@ -22,6 +22,39 @@ BindingStatus = Literal[
 ]
 
 
+AmendmentOperation = Literal[
+    "replace",
+    "add",
+    "delete",
+    "clarify",
+]
+
+
+@dataclass(frozen=True)
+class AmendmentSourcePage:
+    page_id: UUID
+    page_number: int
+    source_page_number: int
+    text: str
+
+
+@dataclass(frozen=True)
+class AmendmentOperationDraft:
+    logical_document_id: UUID
+    page_id: UUID
+    operation: AmendmentOperation
+    target: str
+    previous_value: Any | None
+    revised_value: Any | None
+    evidence_quote: str
+    confidence: float
+    validation_status: Literal[
+        "validated",
+        "review_required",
+    ]
+    reason: str
+
+
 @dataclass(frozen=True)
 class TenderSourceCandidate:
     logical_document_id: UUID
@@ -37,12 +70,15 @@ class TenderSourceCandidate:
     confidence: float
     needs_review: bool
     text: str
+    pages: list[AmendmentSourcePage]
 
 
 @dataclass(frozen=True)
 class BaseTenderSelection:
     primary_logical_document_id: UUID
     supporting_logical_document_ids: list[UUID]
+    authoritative_logical_document_ids: list[UUID]
+    excluded_reference_logical_document_ids: list[UUID]
 
     confidence: float
     needs_review: bool
@@ -67,5 +103,6 @@ class SourcePlanMemberDraft:
 @dataclass(frozen=True)
 class EffectiveTenderPlanDraft:
     members: list[SourcePlanMemberDraft]
+    operations: list[AmendmentOperationDraft]
     needs_review: bool
     warnings: list[str]

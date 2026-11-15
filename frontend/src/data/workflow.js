@@ -55,11 +55,12 @@ export const modeCards = [
 
 export const getNodeStatus = (node, run) => {
   if (!run) return "idle";
-  if (run.workflow_status === "failed" && run.current_node === node.id) return "failed";
-  if (run.next_nodes?.includes(node.id)) return "waiting";
+
+  if (run.failed_node === node.id) return "failed";
+  if (run.completed_nodes?.includes(node.id)) return "complete";
+  if (run.skipped_nodes?.includes(node.id)) return "skipped";
   if (run.current_node === node.id) return "running";
-  if (node.completion && run[node.completion]) return "complete";
-  if (["preflight", "inventory", "load_context"].includes(node.id) && run.native_extraction_completed) return "complete";
-  if (node.optional && run.quality_assessment_completed && !run.ocr_required_page_ids?.length) return "skipped";
+  if (run.next_nodes?.includes(node.id)) return "waiting";
+
   return "idle";
 };

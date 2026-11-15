@@ -27,7 +27,10 @@ system_prompt: |
   13. Do not extract headings as requirements unless the surrounding
       text creates a real obligation.
   14. Avoid duplicates.
-  15. Return JSON only in this format:
+  15. A [VALIDATED AMENDMENT] annotation is a grounded precedence
+      instruction. Apply it, but cite exact source wording from the
+      same chunk rather than generated annotation metadata.
+  16. Return JSON only in this format:
 
   {
     "requirements": [

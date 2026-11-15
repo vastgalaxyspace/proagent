@@ -235,7 +235,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     )
     base_tender_service = BaseTenderService()
-    amendment_service = AmendmentService()
+    amendment_service = AmendmentService(
+        llm=(
+            ai_providers.llm
+            if ai_providers is not None
+            else None
+        ),
+        field_catalog=field_catalog,
+        minimum_confidence=(
+            settings.amendment_minimum_confidence
+        ),
+        max_source_characters=(
+            settings.amendment_max_source_characters
+        ),
+    )
     quality_service = QualityService(
         QualityLimits(
             min_characters=settings.ocr_min_page_characters,

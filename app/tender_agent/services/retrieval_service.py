@@ -311,6 +311,7 @@ class RetrievalService:
                     binding_status=(
                         chunk.binding_status
                     ),
+                    source_role=chunk.source_role,
                     precedence_order=(
                         chunk.precedence_order
                     ),
@@ -321,9 +322,9 @@ class RetrievalService:
             )
 
             initial_score = (
-                vector_score * 0.60
-                + keyword_score * 0.35
-                + authority_score * 0.05
+                vector_score * 0.55
+                + keyword_score * 0.30
+                + authority_score * 0.15
             )
 
             if initial_score < minimum_score:
@@ -605,6 +606,7 @@ class RetrievalService:
     def _authority_score(
         *,
         binding_status: str,
+        source_role: str,
         precedence_order: int,
         maximum_precedence: int,
     ) -> float:
@@ -626,7 +628,19 @@ class RetrievalService:
             else 0.0
         )
 
-        return (
+        amendment_bonus = (
+            0.15
+            if (
+                binding_status == "binding"
+                and source_role
+                in {"corrigendum", "prebid_clarification"}
+            )
+            else 0.0
+        )
+
+        return min(
+            1.0,
             binding_score * 0.70
             + precedence_score * 0.30
+            + amendment_bonus,
         )

@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 
+from app.infrastructure.providers.llm import LLMProvider
+
 from app.tender_agent.domain.authority import (
+    AmendmentOperationDraft,
     BaseTenderSelection,
     EffectiveTenderPlanDraft,
     SourcePlanMemberDraft,
     TenderSourceCandidate,
+)
+from app.tender_agent.schemas.amendments import (
+    LLMAmendmentBatch,
+)
+from app.tender_agent.schemas.field_schema import (
+    TenderFieldCatalog,
 )
 
 
@@ -23,6 +33,19 @@ class AmendmentService:
         "buyer response",
         "official response",
     }
+
+    def __init__(
+        self,
+        *,
+        llm: LLMProvider | None = None,
+        field_catalog: TenderFieldCatalog | None = None,
+        minimum_confidence: float = 0.70,
+        max_source_characters: int = 30_000,
+    ) -> None:
+        self.llm = llm
+        self.field_catalog = field_catalog
+        self.minimum_confidence = minimum_confidence
+        self.max_source_characters = max_source_characters
 
     def build_effective_plan(
         self,
@@ -50,14 +73,27 @@ class AmendmentService:
                 "The selected base tender was not found."
             )
 
+        authoritative_ids = set(
+            selection.authoritative_logical_document_ids
+        )
+        if not authoritative_ids:
+            authoritative_ids = {
+                selection.primary_logical_document_id,
+                *selection.supporting_logical_document_ids,
+            }
+
         base_candidates = [
             candidate
             for candidate in candidates
-            if candidate.document_type
-            not in {
-                "corrigendum",
-                "prebid_clarification",
-            }
+            if (
+                candidate.logical_document_id
+                in authoritative_ids
+                and candidate.document_type
+                not in {
+                    "corrigendum",
+                    "prebid_clarification",
+                }
+            )
         ]
 
         base_candidates.sort(
@@ -79,6 +115,19 @@ class AmendmentService:
             }
         ]
 
+        reference_candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                candidate.content_role == "reference"
+                and candidate.document_type
+                not in {
+                    "corrigendum",
+                    "prebid_clarification",
+                }
+            )
+        ]
+
         amendment_metadata = {
             candidate.logical_document_id: (
                 self._extract_issued_at(candidate),
@@ -98,6 +147,7 @@ class AmendmentService:
 
         ordered_candidates = [
             *base_candidates,
+            *reference_candidates,
             *post_base_candidates,
         ]
 
@@ -159,6 +209,14 @@ class AmendmentService:
                 )
             )
 
+        operations, operation_warnings = (
+            self._extract_semantic_operations(
+                candidates=post_base_candidates,
+                members=members,
+            )
+        )
+        warnings.extend(operation_warnings)
+
         needs_review = bool(
             selection.needs_review
             or warnings
@@ -171,8 +229,220 @@ class AmendmentService:
 
         return EffectiveTenderPlanDraft(
             members=members,
+            operations=operations,
             needs_review=needs_review,
             warnings=warnings,
+        )
+
+    def _extract_semantic_operations(
+        self,
+        *,
+        candidates: list[TenderSourceCandidate],
+        members: list[SourcePlanMemberDraft],
+    ) -> tuple[list[AmendmentOperationDraft], list[str]]:
+        if not candidates:
+            return [], []
+
+        if self.llm is None:
+            return [], [
+                "Amendment documents were ordered, but semantic "
+                "amendment extraction was unavailable because the "
+                "LLM provider is disabled."
+            ]
+
+        member_by_document = {
+            member.logical_document_id: member
+            for member in members
+        }
+        operations: list[AmendmentOperationDraft] = []
+        warnings: list[str] = []
+
+        for candidate in candidates:
+            member = member_by_document.get(
+                candidate.logical_document_id
+            )
+            if member is None:
+                continue
+
+            try:
+                extracted, candidate_warnings = (
+                    self._extract_candidate_operations(
+                        candidate=candidate,
+                        binding_status=member.binding_status,
+                    )
+                )
+                operations.extend(extracted)
+                warnings.extend(candidate_warnings)
+            except Exception as exc:
+                warnings.append(
+                    f"{candidate.title}: semantic amendment "
+                    f"extraction failed: {str(exc)[:300]}"
+                )
+
+        return operations, warnings
+
+    def _extract_candidate_operations(
+        self,
+        *,
+        candidate: TenderSourceCandidate,
+        binding_status: str,
+    ) -> tuple[list[AmendmentOperationDraft], list[str]]:
+        remaining = self.max_source_characters
+        context_pages: list[dict] = []
+
+        for page in candidate.pages:
+            if remaining <= 0:
+                break
+            text = page.text[:remaining]
+            remaining -= len(text)
+            context_pages.append(
+                {
+                    "page_id": str(page.page_id),
+                    "page_number": page.source_page_number,
+                    "text": text,
+                }
+            )
+
+        payload = self.llm.generate_json(
+            system_prompt=(
+                "You extract explicit amendment operations from an "
+                "official procurement corrigendum, addendum, or pre-bid "
+                "clarification. Use only supplied text. Return replace, "
+                "add, delete, or clarify operations. Every operation must "
+                "identify its target and cite an exact evidence quote and "
+                "page_id. When a configured field target matches, use its "
+                "field key as the target. Do not infer an amendment from "
+                "silence."
+            ),
+            user_prompt=(
+                "Extract amendment operations from this source:\n"
+                + json.dumps(
+                    {
+                        "title": candidate.title,
+                        "document_type": candidate.document_type,
+                        "configured_field_targets": (
+                            [
+                                {
+                                    "key": field.key,
+                                    "label": field.label,
+                                    "aliases": (
+                                        field.retrieval_guidance.aliases
+                                    ),
+                                }
+                                for _section, field
+                                in self.field_catalog.all_fields()
+                            ]
+                            if self.field_catalog is not None
+                            else []
+                        ),
+                        "pages": context_pages,
+                        "output_shape": {
+                            "operations": [
+                                {
+                                    "operation": (
+                                        "replace | add | delete | clarify"
+                                    ),
+                                    "target": "clause, field, or requirement",
+                                    "previous_value": None,
+                                    "revised_value": None,
+                                    "page_id": "UUID",
+                                    "evidence_quote": "exact quote",
+                                    "confidence": 0.0,
+                                    "reason": "short reason",
+                                }
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            ),
+            deep=False,
+        )
+        batch = LLMAmendmentBatch.model_validate(payload)
+        page_by_id = {
+            page.page_id: page
+            for page in candidate.pages
+        }
+        grounded: list[AmendmentOperationDraft] = []
+        warnings: list[str] = []
+
+        for item in batch.operations:
+            page = page_by_id.get(item.page_id)
+
+            if page is None or not self._quote_is_supported(
+                quote=item.evidence_quote,
+                text=page.text if page is not None else "",
+            ):
+                page = next(
+                    (
+                        candidate_page
+                        for candidate_page in candidate.pages
+                        if self._quote_is_supported(
+                            quote=item.evidence_quote,
+                            text=candidate_page.text,
+                        )
+                    ),
+                    None,
+                )
+
+            if page is None:
+                warnings.append(
+                    f"{candidate.title}: ignored an ungrounded "
+                    f"amendment operation for {item.target}."
+                )
+                continue
+
+            validated = bool(
+                binding_status == "binding"
+                and item.confidence >= self.minimum_confidence
+            )
+
+            if not validated:
+                warnings.append(
+                    f"{candidate.title}: amendment operation for "
+                    f"{item.target} requires human review."
+                )
+
+            grounded.append(
+                AmendmentOperationDraft(
+                    logical_document_id=(
+                        candidate.logical_document_id
+                    ),
+                    page_id=page.page_id,
+                    operation=item.operation,
+                    target=item.target.strip(),
+                    previous_value=item.previous_value,
+                    revised_value=item.revised_value,
+                    evidence_quote=item.evidence_quote.strip(),
+                    confidence=item.confidence,
+                    validation_status=(
+                        "validated"
+                        if validated
+                        else "review_required"
+                    ),
+                    reason=item.reason.strip(),
+                )
+            )
+
+        return grounded, warnings
+
+    @staticmethod
+    def _quote_is_supported(
+        *,
+        quote: str,
+        text: str,
+    ) -> bool:
+        normalize = lambda value: re.sub(
+            r"\s+",
+            " ",
+            value.casefold(),
+        ).strip()
+        normalized_quote = normalize(quote)
+        return bool(
+            normalized_quote
+            and normalized_quote in normalize(text)
         )
 
     def _authority_for_candidate(

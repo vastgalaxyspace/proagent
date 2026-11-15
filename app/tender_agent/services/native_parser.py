@@ -591,6 +591,9 @@ class NativeDocumentParser:
         document_parts: list[str] = []
         warnings: list[str] = []
         total_uncompressed_bytes = 0
+        processed_member_count = 0
+        failed_member_count = 0
+        skipped_member_count = 0
 
         with zipfile.ZipFile(path) as archive:
             members = [
@@ -636,6 +639,16 @@ class NativeDocumentParser:
                         raise ValueError(
                             "Encrypted ZIP members are unsupported."
                         )
+
+                    if self._is_ignorable_archive_member(
+                        member_path
+                    ):
+                        skipped_member_count += 1
+                        warnings.append(
+                            f"{member_path.as_posix()}: skipped "
+                            "temporary Office or archive metadata file."
+                        )
+                        continue
 
                     suffix = Path(member.filename).suffix.lower()
 
@@ -697,11 +710,21 @@ class NativeDocumentParser:
                         with target_path.open("wb") as destination:
                             shutil.copyfileobj(source, destination)
 
-                    member_result = self._extract_path(
-                        path=target_path,
-                        document_id=document_id,
-                        source_name=member_path.as_posix(),
-                    )
+                    try:
+                        member_result = self._extract_path(
+                            path=target_path,
+                            document_id=document_id,
+                            source_name=member_path.as_posix(),
+                        )
+                    except Exception as exc:
+                        failed_member_count += 1
+                        warnings.append(
+                            f"{member_path.as_posix()}: native "
+                            f"extraction failed: {exc}"
+                        )
+                        continue
+
+                    processed_member_count += 1
 
                     document_parts.append(
                         f"[file {member_path.as_posix()}]\n"
@@ -746,8 +769,24 @@ class NativeDocumentParser:
             metadata={
                 "parser": "zip_archive",
                 "member_count": len(members),
+                "processed_member_count": processed_member_count,
+                "failed_member_count": failed_member_count,
+                "skipped_member_count": skipped_member_count,
                 "uncompressed_bytes": total_uncompressed_bytes,
             },
+        )
+
+    @staticmethod
+    def _is_ignorable_archive_member(
+        member_path: PurePosixPath,
+    ) -> bool:
+        parts = member_path.parts
+        name = member_path.name
+
+        return bool(
+            name.startswith("~$")
+            or name in {".DS_Store", "Thumbs.db", "desktop.ini"}
+            or "__MACOSX" in parts
         )
 
     @staticmethod

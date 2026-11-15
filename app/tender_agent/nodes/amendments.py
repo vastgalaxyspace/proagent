@@ -40,6 +40,29 @@ def amendments_node(
                 [],
             )
         ],
+        authoritative_logical_document_ids=[
+            UUID(logical_document_id)
+            for logical_document_id in (
+                state.get(
+                    "authoritative_logical_document_ids",
+                    [],
+                )
+                or [
+                    state["primary_base_logical_document_id"],
+                    *state.get(
+                        "base_supporting_logical_document_ids",
+                        [],
+                    ),
+                ]
+            )
+        ],
+        excluded_reference_logical_document_ids=[
+            UUID(logical_document_id)
+            for logical_document_id in state.get(
+                "excluded_reference_logical_document_ids",
+                [],
+            )
+        ],
         confidence=state.get(
             "base_selection_confidence",
             0.0,
@@ -135,6 +158,36 @@ def amendments_node(
         "effective_source_needs_review": (
             draft.needs_review
         ),
+        "amendment_operation_count": len(
+            draft.operations
+        ),
+        "validated_amendment_operation_count": sum(
+            operation.validation_status == "validated"
+            for operation in draft.operations
+        ),
+        "review_amendment_operation_count": sum(
+            operation.validation_status == "review_required"
+            for operation in draft.operations
+        ),
+        "amendment_operations": [
+            {
+                "logical_document_id": str(
+                    operation.logical_document_id
+                ),
+                "page_id": str(operation.page_id),
+                "operation": operation.operation,
+                "target": operation.target,
+                "previous_value": operation.previous_value,
+                "revised_value": operation.revised_value,
+                "evidence_quote": operation.evidence_quote,
+                "confidence": operation.confidence,
+                "validation_status": (
+                    operation.validation_status
+                ),
+                "reason": operation.reason,
+            }
+            for operation in draft.operations
+        ],
         "workflow_status": "amendments_resolved",
         "current_node": "amendments",
         "next_action": "retrieval",

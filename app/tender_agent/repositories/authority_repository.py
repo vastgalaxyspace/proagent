@@ -13,8 +13,10 @@ from app.infrastructure.database.models import (
     LogicalDocumentPage,
     TenderSourcePlan,
     TenderSourcePlanMember,
+    TenderAmendmentOperation,
 )
 from app.tender_agent.domain.authority import (
+    AmendmentSourcePage,
     BaseTenderSelection,
     EffectiveTenderPlanDraft,
     TenderSourceCandidate,
@@ -132,6 +134,17 @@ class AuthorityRepository:
                         logical_document.needs_review
                     ),
                     text=combined_text,
+                    pages=[
+                        AmendmentSourcePage(
+                            page_id=page.id,
+                            page_number=page.page_number,
+                            source_page_number=(
+                                page.source_page_number
+                            ),
+                            text=page.extracted_text or "",
+                        )
+                        for page in pages
+                    ],
                 )
             )
 
@@ -198,6 +211,12 @@ class AuthorityRepository:
                 == plan.id
             )
         )
+        self.session.execute(
+            delete(TenderAmendmentOperation).where(
+                TenderAmendmentOperation.source_plan_id
+                == plan.id
+            )
+        )
 
         members = [
             TenderSourcePlanMember(
@@ -219,6 +238,34 @@ class AuthorityRepository:
         ]
 
         self.session.add_all(members)
+        self.session.add_all(
+            [
+                TenderAmendmentOperation(
+                    source_plan_id=plan.id,
+                    logical_document_id=(
+                        operation.logical_document_id
+                    ),
+                    page_id=operation.page_id,
+                    operation=operation.operation,
+                    target=operation.target,
+                    previous_value_json=(
+                        operation.previous_value
+                    ),
+                    revised_value_json=(
+                        operation.revised_value
+                    ),
+                    evidence_quote=(
+                        operation.evidence_quote
+                    ),
+                    confidence=operation.confidence,
+                    validation_status=(
+                        operation.validation_status
+                    ),
+                    reason=operation.reason,
+                )
+                for operation in draft.operations
+            ]
+        )
 
         plan.status = "effective_sources_built"
         plan.needs_review = draft.needs_review

@@ -66,6 +66,7 @@ class TenderRuntimeContext(TypedDict):
     retrieval_service: NotRequired[RetrievalService]
     ocr_max_attempts: int
     ocr_min_accepted_score: float
+    ocr_failure_policy: str
     max_document_characters: int
     classification_service: TenderClassificationService
     structure_service: StructureService

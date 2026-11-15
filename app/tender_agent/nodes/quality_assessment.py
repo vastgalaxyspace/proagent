@@ -124,6 +124,11 @@ def quality_assessment_node(
         "quality_page_count": assessed_count,
         "quality_passed_page_ids": passed_page_ids,
         "ocr_required_page_ids": ocr_page_ids,
+        "skipped_nodes": (
+            []
+            if ocr_page_ids
+            else ["ocr_recovery"]
+        ),
         "workflow_status": "quality_assessed",
         "current_node": "quality_assessment",
         "next_action": (

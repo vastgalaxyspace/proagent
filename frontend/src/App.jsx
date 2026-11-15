@@ -137,14 +137,20 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
   const nodeStates = useMemo(() => workflowNodes.map((node) => ({ node, status: getNodeStatus(node, run) })), [run]);
   const activeNode = useMemo(() => {
     if (!run) return workflowNodes[0];
-    const id = run.current_node || run.next_nodes?.[0];
+    const id = (
+      run.failed_node
+      || run.current_node
+      || run.next_nodes?.[0]
+    );
     return workflowNodes.find((node) => node.id === id)
       || [...nodeStates].reverse().find((item) => item.status === "complete")?.node
       || workflowNodes[0];
   }, [run, nodeStates]);
   const activeStatus = starting && !run ? "running" : getNodeStatus(activeNode, run);
   const completeCount = nodeStates.filter((item) => item.status === "complete").length;
-  const progress = Math.round((completeCount / workflowNodes.length) * 100);
+  const skippedCount = nodeStates.filter((item) => item.status === "skipped").length;
+  const processedCount = completeCount + skippedCount;
+  const progress = Math.round((processedCount / workflowNodes.length) * 100);
   const metrics = activeNode.metrics || [];
 
   return (
@@ -164,7 +170,14 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
       <div className="run-layout">
         <aside className="node-sidebar">
           <div className="progress-heading">
-            <div><span>WORKFLOW</span><strong>{completeCount} of {workflowNodes.length} complete</strong></div>
+            <div>
+              <span>WORKFLOW</span>
+              <strong>
+                {completeCount} complete
+                {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
+                {` · ${workflowNodes.length} total`}
+              </strong>
+            </div>
             <b>{progress}%</b>
           </div>
           <div className="progress-track"><i style={{ width: `${progress}%` }} /></div>

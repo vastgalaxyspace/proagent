@@ -1031,6 +1031,100 @@ class TenderSourcePlanMember(Base):
         server_default=func.now(),
     )
 
+
+class TenderAmendmentOperation(Base):
+    __tablename__ = "tender_amendment_operations"
+    __table_args__ = (
+        Index(
+            "ix_tender_amendment_operations_plan_status",
+            "source_plan_id",
+            "validation_status",
+        ),
+        Index(
+            "ix_tender_amendment_operations_target",
+            "target",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    source_plan_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "tender_source_plans.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    logical_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "logical_documents.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    page_id: Mapped[UUID] = mapped_column(
+        ForeignKey(
+            "document_pages.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    operation: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    target: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    previous_value_json: Mapped[Any | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    revised_value_json: Mapped[Any | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    evidence_quote: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+
+    validation_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    reason: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
 class RetrievalIndex(Base):
     __tablename__ = "retrieval_indexes"
     __table_args__ = (
