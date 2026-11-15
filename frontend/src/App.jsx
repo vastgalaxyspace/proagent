@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertCircle, ArrowRight, Check, CheckCircle2, Circle,
-  Clock3, Cpu, DollarSign, FileText, Loader2, Play, RotateCcw,
+  Cpu, DollarSign, FileText, Loader2, Play, RotateCcw,
   UploadCloud, X,
 } from "lucide-react";
 import { api } from "./lib/api.js";
@@ -134,8 +134,9 @@ function UploadScreen({ readiness, onLaunch, onAttach, busy, error }) {
 }
 
 function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
   const nodeStates = useMemo(() => workflowNodes.map((node) => ({ node, status: getNodeStatus(node, run) })), [run]);
-  const activeNode = useMemo(() => {
+  const liveNode = useMemo(() => {
     if (!run) return workflowNodes[0];
     const id = (
       run.failed_node
@@ -146,7 +147,9 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
       || [...nodeStates].reverse().find((item) => item.status === "complete")?.node
       || workflowNodes[0];
   }, [run, nodeStates]);
-  const activeStatus = starting && !run ? "running" : getNodeStatus(activeNode, run);
+  const activeNode = workflowNodes.find((node) => node.id === selectedNodeId) || liveNode;
+  const activeStatus = starting && !run && activeNode.id === liveNode.id ? "running" : getNodeStatus(activeNode, run);
+  const liveStatus = starting && !run ? "running" : getNodeStatus(liveNode, run);
   const completeCount = nodeStates.filter((item) => item.status === "complete").length;
   const skippedCount = nodeStates.filter((item) => item.status === "skipped").length;
   const processedCount = completeCount + skippedCount;
@@ -183,18 +186,25 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
           <div className="progress-track"><i style={{ width: `${progress}%` }} /></div>
           <nav className="node-list" aria-label="Workflow nodes">
             {nodeStates.map(({ node, status }, index) => (
-              <div className={`node-item ${status}`} key={node.id}>
+              <button
+                type="button"
+                className={`node-item ${status} ${activeNode.id === node.id ? "selected" : ""}`}
+                key={node.id}
+                onClick={() => setSelectedNodeId(node.id)}
+                aria-pressed={activeNode.id === node.id}
+                aria-label={`Open ${node.label} node details`}
+              >
                 <span className="node-number"><StatusIcon status={status} /></span>
                 <div><small>STEP {String(index + 1).padStart(2, "0")}</small><strong>{node.label}</strong></div>
                 <em>{statusLabel[status]}</em>
-              </div>
+              </button>
             ))}
           </nav>
         </aside>
 
         <main className="node-workspace">
           <div className="workspace-topline">
-            <div className={`live-status ${activeStatus}`}><Activity size={14} />{starting && !run ? "Starting agent" : statusLabel[activeStatus]}</div>
+            <div className={`live-status ${liveStatus}`}><Activity size={14} />{starting && !run ? "Starting agent" : statusLabel[liveStatus]}</div>
             <div className="backend-status"><i className={readiness?.status === "ready" ? "online" : ""} />Backend {readiness?.status || "unknown"}</div>
           </div>
 
@@ -203,13 +213,22 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
           <section className="active-node-card">
             <div className="node-card-header">
               <span className={`large-node-icon ${activeStatus}`}><StatusIcon status={activeStatus} /></span>
-              <div><p>CURRENT NODE</p><h1>{activeNode.label}</h1><code>{activeNode.id}</code></div>
+              <div><p>{selectedNodeId ? "SELECTED NODE" : "CURRENT NODE"}</p><h1>{activeNode.label}</h1><code>{activeNode.id}</code></div>
+              {selectedNodeId && (
+                <button className="follow-live-button" type="button" onClick={() => setSelectedNodeId(null)}>
+                  <Activity size={13} /> Follow live node
+                </button>
+              )}
             </div>
             <p className="node-description">{activeNode.summary}</p>
+            <div className="task-heading"><span>WHAT THIS NODE DOES</span><small>{activeNode.tasks?.length || 0} tasks</small></div>
             <div className="step-list">
-              <div className="step-row done"><span><CheckCircle2 size={17} /></span><div><strong>Receive input</strong><p>Read the saved output from the previous workflow node.</p></div></div>
-              <div className={`step-row ${activeStatus === "running" ? "active" : activeStatus === "complete" ? "done" : ""}`}><span>{activeStatus === "running" ? <Loader2 className="spin" size={17} /> : <Activity size={17} />}</span><div><strong>Process</strong><p>{activeNode.summary}</p></div></div>
-              <div className={`step-row ${activeStatus === "complete" ? "done" : ""}`}><span>{activeStatus === "complete" ? <CheckCircle2 size={17} /> : <Clock3 size={17} />}</span><div><strong>Save output</strong><p>Validate the result and checkpoint it for the next node.</p></div></div>
+              {(activeNode.tasks || []).map((task, index) => (
+                <div className={`step-row node-task-row ${activeStatus === "complete" ? "done" : activeStatus === "running" ? "active" : ""}`} key={task.title}>
+                  <span>{activeStatus === "complete" ? <CheckCircle2 size={17} /> : <b>{index + 1}</b>}</span>
+                  <div><strong>{task.title}</strong><p>{task.description}</p></div>
+                </div>
+              ))}
             </div>
           </section>
 

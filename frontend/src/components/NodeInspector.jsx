@@ -22,6 +22,15 @@ export function NodeInspector({ nodeId, run, onClose }) {
       <div className="inspector-status"><code>{node.id}</code><StatusPill status={status} /></div>
       <p className="node-summary">{node.summary}</p>
       {node.interrupt && <div className="callout"><Info size={16} /><span>This node persists the review package before calling <code>interrupt()</code>. Resume uses the same thread and does not restart extraction.</span></div>}
+      <h3>What this node does</h3>
+      <div className="node-task-list">
+        {node.tasks.map((task, index) => (
+          <div className="node-task" key={task.title}>
+            <span>{index + 1}</span>
+            <div><strong>{task.title}</strong><p>{task.description}</p></div>
+          </div>
+        ))}
+      </div>
       <h3>Observed state</h3>
       <div className="metric-list">
         {node.metrics.map((metric) => <div className="metric-row" key={metric}><code>{metric}</code><span>{display(run?.[metric])}</span></div>)}
