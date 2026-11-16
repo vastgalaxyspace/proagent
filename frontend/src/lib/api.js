@@ -31,6 +31,9 @@ export const api = {
   },
   startRun: (tenderId, headers) => request(`/v1/tenders/${encodeURIComponent(tenderId)}/runs`, { method: "POST" }, headers),
   getRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}`, {}, headers),
+  pauseRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/pause`, { method: "POST" }, headers),
+  resumeRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/resume`, { method: "POST" }, headers),
+  cancelRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/cancel`, { method: "POST" }, headers),
   getReview: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/review`, {}, headers),
   submitReview: (threadId, payload, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/review`, {
     method: "POST",

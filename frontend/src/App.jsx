@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertCircle, ArrowRight, Check, CheckCircle2, Circle,
-  Cpu, DollarSign, FileText, Loader2, Play, RotateCcw,
+  Cpu, DollarSign, FileText, Loader2, Pause, Play, RotateCcw, Square,
   UploadCloud, X,
 } from "lucide-react";
 import { api } from "./lib/api.js";
 import { getNodeStatus, workflowNodes } from "./data/workflow.js";
 
 const defaultHeaders = { tenantId: "demo-tenant", userId: "developer" };
+
+const loadSavedRun = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem("proagent.run") || "null");
+    if (saved?.threadId && saved?.headers?.tenantId && saved?.headers?.userId) return saved;
+  } catch {
+    // Ignore invalid browser storage and show the upload screen.
+  }
+  const legacyThreadId = localStorage.getItem("proagent.threadId");
+  return legacyThreadId ? { threadId: legacyThreadId, headers: defaultHeaders } : null;
+};
 
 const pretty = (value) => {
   if (value === null || value === undefined || value === "") return "—";
@@ -133,7 +144,7 @@ function UploadScreen({ readiness, onLaunch, onAttach, busy, error }) {
   );
 }
 
-function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
+function RunScreen({ readiness, run, threadId, starting, error, onReset, onControl, controlBusy }) {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const nodeStates = useMemo(() => workflowNodes.map((node) => ({ node, status: getNodeStatus(node, run) })), [run]);
   const liveNode = useMemo(() => {
@@ -155,6 +166,11 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
   const processedCount = completeCount + skippedCount;
   const progress = Math.round((processedCount / workflowNodes.length) * 100);
   const metrics = activeNode.metrics || [];
+  const operationStatus = run?.operation_status || (starting ? "queued" : "unknown");
+  const canPause = ["queued", "running"].includes(operationStatus);
+  const canResume = operationStatus === "paused";
+  const canCancel = ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(operationStatus);
+  const operationLabel = operationStatus.replaceAll("_", " ");
 
   return (
     <div className="run-page">
@@ -166,6 +182,12 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
         <div className="header-summary">
           <div className="model-chip"><Cpu size={15} /><span>Model<strong>{readiness?.main_llm_model || "Not reported"}</strong></span></div>
           <div className="cost-chip"><DollarSign size={15} /><span>Run cost<strong>Not reported</strong><small>API has no token usage yet</small></span></div>
+          <div className="run-controls" aria-label="Agent controls">
+            {canPause && <button className="run-control pause" disabled={Boolean(controlBusy)} onClick={() => onControl("pause")}><Pause size={14} />{controlBusy === "pause" ? "Pausing…" : "Pause"}</button>}
+            {operationStatus === "pause_requested" && <button className="run-control pause" disabled><Loader2 className="spin" size={14} />Pausing…</button>}
+            {canResume && <button className="run-control resume" disabled={Boolean(controlBusy)} onClick={() => onControl("resume")}><Play size={14} />{controlBusy === "resume" ? "Resuming…" : "Resume"}</button>}
+            {canCancel && <button className="run-control cancel" disabled={Boolean(controlBusy) || operationStatus === "cancel_requested"} onClick={() => onControl("cancel")}><Square size={12} fill="currentColor" />{operationStatus === "cancel_requested" || controlBusy === "cancel" ? "Cancelling…" : "Cancel"}</button>}
+          </div>
           <button className="new-run" onClick={onReset}><RotateCcw size={15} />New tender</button>
         </div>
       </header>
@@ -204,11 +226,14 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
 
         <main className="node-workspace">
           <div className="workspace-topline">
-            <div className={`live-status ${liveStatus}`}><Activity size={14} />{starting && !run ? "Starting agent" : statusLabel[liveStatus]}</div>
+            <div className={`live-status ${operationStatus}`}><Activity size={14} />{starting && !run ? "Starting agent" : operationLabel}</div>
             <div className="backend-status"><i className={readiness?.status === "ready" ? "online" : ""} />Backend {readiness?.status || "unknown"}</div>
           </div>
 
           {error && <div className="run-error"><AlertCircle size={17} /><div><strong>Run error</strong><span>{error}</span></div></div>}
+          {run?.control_message && operationStatus === "paused" && (
+            <div className="run-notice"><Pause size={17} /><div><strong>Run paused</strong><span>{run.control_message}</span></div></div>
+          )}
 
           <section className="active-node-card">
             <div className="node-card-header">
@@ -254,13 +279,15 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset }) {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState("upload");
+  const restoredRun = useMemo(loadSavedRun, []);
+  const [screen, setScreen] = useState(restoredRun ? "run" : "upload");
   const [readiness, setReadiness] = useState(null);
-  const [headers, setHeaders] = useState(defaultHeaders);
-  const [threadId, setThreadId] = useState("");
+  const [headers, setHeaders] = useState(restoredRun?.headers || defaultHeaders);
+  const [threadId, setThreadId] = useState(restoredRun?.threadId || "");
   const [run, setRun] = useState(null);
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [controlBusy, setControlBusy] = useState("");
   const [error, setError] = useState("");
 
   const checkReadiness = useCallback(() => {
@@ -300,6 +327,7 @@ export default function App() {
       const accepted = await api.startRun(tender.tender_id, nextHeaders);
       setThreadId(accepted.thread_id);
       localStorage.setItem("proagent.threadId", accepted.thread_id);
+      localStorage.setItem("proagent.run", JSON.stringify({ threadId: accepted.thread_id, headers: nextHeaders }));
     } catch (reason) {
       setError(reason.message);
       setScreen("upload");
@@ -308,14 +336,30 @@ export default function App() {
 
   const attach = (nextThreadId, nextHeaders) => {
     setHeaders(nextHeaders); setThreadId(nextThreadId); setRun(null); setError(""); setScreen("run");
+    localStorage.setItem("proagent.threadId", nextThreadId);
+    localStorage.setItem("proagent.run", JSON.stringify({ threadId: nextThreadId, headers: nextHeaders }));
+  };
+
+  const controlRun = async (action) => {
+    if (!threadId || controlBusy) return;
+    if (action === "cancel" && !window.confirm("Cancel this agent run? Completed node results will remain stored.")) return;
+    setControlBusy(action); setError("");
+    try {
+      if (action === "pause") await api.pauseRun(threadId, headers);
+      if (action === "resume") await api.resumeRun(threadId, headers);
+      if (action === "cancel") await api.cancelRun(threadId, headers);
+      await refresh();
+    } catch (reason) { setError(reason.message); }
+    finally { setControlBusy(""); }
   };
 
   const reset = () => {
-    setScreen("upload"); setThreadId(""); setRun(null); setStarting(false); setError("");
+    setScreen("upload"); setThreadId(""); setRun(null); setStarting(false); setControlBusy(""); setError("");
     localStorage.removeItem("proagent.threadId");
+    localStorage.removeItem("proagent.run");
   };
 
   return screen === "upload"
     ? <UploadScreen readiness={readiness} onLaunch={launch} onAttach={attach} busy={busy} error={error} />
-    : <RunScreen readiness={readiness} run={run} threadId={threadId} starting={starting} error={error} onReset={reset} />;
+    : <RunScreen readiness={readiness} run={run} threadId={threadId} starting={starting} error={error} onReset={reset} onControl={controlRun} controlBusy={controlBusy} />;
 }

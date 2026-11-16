@@ -36,6 +36,10 @@ class DocumentExtractionStatus(StrEnum):
 class OperationStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    PAUSE_REQUESTED = "pause_requested"
+    PAUSED = "paused"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELLED = "cancelled"
     AWAITING_REVIEW = "awaiting_review"
     APPROVED = "approved"
     CHANGES_REQUESTED = "changes_requested"

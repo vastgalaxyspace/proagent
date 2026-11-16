@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -62,6 +63,9 @@ from app.infrastructure.providers.settings import (
 from app.infrastructure.storage.local_storage import LocalObjectStorage
 from app.tender_agent.graph import build_tender_graph
 from app.tender_agent.handoff import HandoffService
+from app.tender_agent.repositories.operation_repository import (
+    OperationRepository,
+)
 from app.tender_agent.schemas.responses import (
     HealthResponse,
     ReadinessResponse,
@@ -78,6 +82,9 @@ from app.tender_agent.services.quality_service import (
     QualityLimits,
     QualityService,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -295,6 +302,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         min_pool_size=settings.checkpoint_pool_min_size,
         max_pool_size=settings.checkpoint_pool_max_size,
     ) as checkpointer:
+        with database.session_factory() as recovery_session:
+            recovered_count = OperationRepository(
+                recovery_session
+            ).pause_orphaned_active_runs()
+            recovery_session.commit()
+        if recovered_count:
+            logger.warning(
+                "Marked %s unfinished tender run(s) as paused after restart.",
+                recovered_count,
+            )
+
         app.state.database = database
         app.state.object_storage = object_storage
         app.state.native_parser = native_parser

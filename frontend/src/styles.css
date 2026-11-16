@@ -55,6 +55,12 @@ input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px #e8efff; }
 .run-header { height: 76px; position: sticky; top: 0; z-index: 10; padding: 0 22px; }
 .run-id { max-width: 470px; margin: 4px 0 0 44px; overflow: hidden; color: #8a95a8; font: 9px "Cascadia Code", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .header-summary { display: flex; align-items: center; gap: 9px; }
+.run-controls { display: flex; align-items: center; gap: 5px; }
+.run-control { height: 37px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid; border-radius: 8px; font-size: 10px; font-weight: 750; }
+.run-control:disabled { cursor: not-allowed; opacity: .55; }
+.run-control.pause { border-color: #f1ce85; color: #95630d; background: #fff9e9; }
+.run-control.resume { border-color: #a9ddc4; color: #177451; background: #edfaf4; }
+.run-control.cancel { border-color: #f0bcbc; color: #b12e2e; background: #fff4f4; }
 .model-chip, .cost-chip { min-height: 45px; display: flex; align-items: center; gap: 9px; padding: 7px 11px; border: 1px solid #e0e5ed; border-radius: 9px; color: #59708f; background: #fafbfd; }
 .model-chip span, .cost-chip span { display: grid; gap: 1px; color: #8994a6; font-size: 8px; font-weight: 700; text-transform: uppercase; }
 .model-chip strong, .cost-chip strong { color: #2d394e; font-size: 11px; text-transform: none; }
@@ -88,12 +94,19 @@ input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px #e8efff; }
 .workspace-topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .live-status { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 99px; color: #6e7a8e; background: #edf0f4; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .live-status.running { color: #1e5bc8; background: #e8f0ff; }
+.live-status.queued, .live-status.pause_requested, .live-status.cancel_requested { color: #95630d; background: #fff3d5; }
+.live-status.paused { color: #7445a5; background: #f2eafd; }
+.live-status.cancelled { color: #a73131; background: #fdeaea; }
+.live-status.awaiting_review { color: #7445a5; background: #f2eafd; }
 .live-status.complete { color: #187b52; background: #e5f7ee; }
 .backend-status { display: flex; align-items: center; gap: 6px; color: #8b95a6; font-size: 9px; text-transform: capitalize; }
 .backend-status i { width: 6px; height: 6px; }
 .run-error { margin: 0 0 14px; }
 .run-error div { display: grid; gap: 2px; }
 .run-error span { color: #c05c5c; }
+.run-notice { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; padding: 11px 12px; border: 1px solid #d8c2ef; border-radius: 8px; color: #7445a5; background: #f8f2ff; font-size: 11px; }
+.run-notice div { display: grid; gap: 2px; }
+.run-notice span { color: #806b96; }
 .active-node-card, .output-card, .messages-card { border: 1px solid #e0e5ed; border-radius: 13px; background: #fff; box-shadow: 0 8px 28px rgba(31, 44, 68, .045); }
 .active-node-card { padding: 27px; }
 .node-card-header { display: flex; align-items: center; gap: 14px; }

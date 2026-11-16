@@ -26,7 +26,7 @@ def execute_tender_run(
     user_id: str,
     graph: Any,
     graph_config: dict[str, Any],
-    initial_state: dict[str, Any],
+    graph_input: Any,
     runtime_context: dict[str, Any],
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -37,6 +37,7 @@ def execute_tender_run(
         operation = repository.get_for_tenant(
             operation_id=operation_id,
             tenant_id=tenant_id,
+            for_update=True,
         )
 
         if operation is None:
@@ -59,7 +60,7 @@ def execute_tender_run(
 
     try:
         result = graph.invoke(
-            initial_state,
+            graph_input,
             config=graph_config,
             context=runtime_context,
         )
@@ -78,6 +79,7 @@ def execute_tender_run(
         return
 
     interrupted = bool(result.get("__interrupt__"))
+    interrupt_kind, interrupt_node = _read_interrupt(result)
     serializable_result = {
         key: value
         for key, value in result.items()
@@ -87,7 +89,13 @@ def execute_tender_run(
         serializable_result
     )
 
-    if interrupted:
+    if interrupt_kind == "operator_pause":
+        result_summary["workflow_status"] = "paused"
+        result_summary["current_node"] = interrupt_node
+    elif interrupt_kind == "operator_cancel":
+        result_summary["workflow_status"] = "cancelled"
+        result_summary["current_node"] = interrupt_node
+    elif interrupted:
         result_summary["workflow_status"] = "awaiting_review"
         result_summary["current_node"] = "review_handoff"
 
@@ -97,6 +105,7 @@ def execute_tender_run(
         operation = operation_repository.get_for_tenant(
             operation_id=operation_id,
             tenant_id=tenant_id,
+            for_update=True,
         )
 
         if operation is None:
@@ -106,7 +115,24 @@ def execute_tender_run(
             )
             return
 
-        if result.get("workflow_status") == "failed":
+        if interrupt_kind == "operator_pause":
+            operation.result_json = result_summary
+            operation_repository.mark_paused(operation)
+            event_type = "tender.understanding.paused"
+        elif interrupt_kind == "operator_cancel":
+            operation_repository.mark_cancelled(
+                operation,
+                result=result_summary,
+            )
+            event_type = "tender.understanding.cancelled"
+        elif operation.status == OperationStatus.CANCEL_REQUESTED.value:
+            result_summary["workflow_status"] = "cancelled"
+            operation_repository.mark_cancelled(
+                operation,
+                result=result_summary,
+            )
+            event_type = "tender.understanding.cancelled"
+        elif result.get("workflow_status") == "failed":
             operation_repository.mark_failed(
                 operation,
                 error_code="graph_validation_failed",
@@ -138,6 +164,21 @@ def execute_tender_run(
         session.commit()
 
 
+def _read_interrupt(
+    result: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    for item in result.get("__interrupt__", ()):
+        value = getattr(item, "value", None)
+        if isinstance(value, dict):
+            interrupt_type = value.get("type")
+            if interrupt_type in {
+                "operator_pause",
+                "operator_cancel",
+            }:
+                return interrupt_type, value.get("node")
+    return None, None
+
+
 def _mark_execution_failed(
     *,
     operation_id: UUID,
@@ -153,9 +194,29 @@ def _mark_execution_failed(
             operation = operation_repository.get_for_tenant(
                 operation_id=operation_id,
                 tenant_id=tenant_id,
+                for_update=True,
             )
 
             if operation is None:
+                return
+
+            if operation.status in {
+                OperationStatus.PAUSED.value,
+                OperationStatus.CANCELLED.value,
+            }:
+                return
+
+            if operation.status == OperationStatus.PAUSE_REQUESTED.value:
+                operation_repository.mark_paused(
+                    operation,
+                    reason="execution_stopped_while_pausing",
+                )
+                session.commit()
+                return
+
+            if operation.status == OperationStatus.CANCEL_REQUESTED.value:
+                operation_repository.mark_cancelled(operation)
+                session.commit()
                 return
 
             operation_repository.mark_failed(

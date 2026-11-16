@@ -108,6 +108,7 @@ from app.tender_agent.schemas.review import (
 from app.tender_agent.repositories.tender_repository import TenderRepository
 from app.tender_agent.schemas.responses import (
     RegisteredDocumentResponse,
+    RunControlResponse,
     TenderCreatedResponse,
     TenderRunAccepted,
     TenderRunStatus,
@@ -129,6 +130,56 @@ router = APIRouter(
     prefix="/tenders",
     tags=["tender-agent"],
 )
+
+
+def _build_runtime_context(
+    *,
+    request: Request,
+    request_context: RequestContext,
+    session_factory: sessionmaker[Session],
+    thread_id: str,
+) -> dict[str, Any]:
+    settings = get_settings()
+    state = request.app.state
+    context: dict[str, Any] = {
+        "tenant_id": request_context.tenant_id,
+        "user_id": request_context.user_id,
+        "session_factory": session_factory,
+        "object_storage": state.object_storage,
+        "native_parser": state.native_parser,
+        "quality_service": state.quality_service,
+        "ocr_provider": state.ocr_provider,
+        "structure_service": state.structure_service,
+        "classification_service": state.classification_service,
+        "base_tender_service": state.base_tender_service,
+        "amendment_service": state.amendment_service,
+        "ocr_max_attempts": settings.ocr_max_attempts,
+        "ocr_failure_policy": (
+            settings.ocr_failure_policy
+            if settings.ocr_failure_policy != "auto"
+            else (
+                "fail"
+                if settings.app_environment == "production"
+                else "warn"
+            )
+        ),
+        "retrieval_service": state.retrieval_service,
+        "field_catalog": state.field_catalog,
+        "understanding_service": state.understanding_service,
+        "normalization_service": state.normalization_service,
+        "reconciliation_service": state.reconciliation_service,
+        "requirement_service": state.requirement_service,
+        "evidence_service": state.evidence_service,
+        "coverage_service": state.coverage_service,
+        "validation_service": state.validation_service,
+        "handoff_service": state.handoff_service,
+        "thread_id": thread_id,
+        "ocr_min_accepted_score": settings.ocr_min_accepted_score,
+        "max_document_characters": settings.max_document_characters,
+    }
+    if state.ai_providers is not None:
+        context["ai_providers"] = state.ai_providers
+    return context
 
 
 @router.post(
@@ -467,56 +518,15 @@ def start_tender_run(
         "warnings": [],
         "errors": [],
     }
+    operation.result_json = initial_state
+    session.commit()
 
-    runtime_context = {
-        "tenant_id": request_context.tenant_id,
-        "user_id": request_context.user_id,
-        "session_factory": session_factory,
-        "object_storage": storage,
-        "native_parser": native_parser,
-        "quality_service": quality_service,
-        "ocr_provider": ocr_provider,
-        "structure_service": structure_service,
-        "classification_service": classification_service,
-        "base_tender_service": base_tender_service,
-        "amendment_service": amendment_service,
-        "ocr_max_attempts": settings.ocr_max_attempts,
-        "ocr_failure_policy": (
-            settings.ocr_failure_policy
-            if settings.ocr_failure_policy != "auto"
-            else (
-                "fail"
-                if settings.app_environment == "production"
-                else "warn"
-            )
-        ),
-        "retrieval_service": retrieval_service,
-        "field_catalog": field_catalog,
-        "understanding_service": understanding_service,
-        "normalization_service": normalization_service,
-        "reconciliation_service": reconciliation_service,
-        "requirement_service": requirement_service,
-        "evidence_service": evidence_service,
-        "coverage_service": coverage_service,
-        "validation_service": validation_service,
-        "handoff_service": handoff_service,
-        "thread_id": thread_id,
-        "ocr_min_accepted_score": (
-            settings.ocr_min_accepted_score
-        ),
-        "max_document_characters": (
-            settings.max_document_characters
-        ),
-    }
-
-    ai_providers = getattr(
-        request.app.state,
-        "ai_providers",
-        None,
+    runtime_context = _build_runtime_context(
+        request=request,
+        request_context=request_context,
+        session_factory=session_factory,
+        thread_id=thread_id,
     )
-
-    if ai_providers is not None:
-        runtime_context["ai_providers"] = ai_providers
 
     dispatch_tender_run(
         background_tasks=background_tasks,
@@ -525,7 +535,7 @@ def start_tender_run(
         user_id=request_context.user_id,
         graph=graph,
         graph_config=graph_config,
-        initial_state=initial_state,
+        graph_input=initial_state,
         runtime_context=runtime_context,
         session_factory=session_factory,
     )
@@ -543,6 +553,222 @@ def start_tender_run(
         request_id=request_id,
         workflow_status=OperationStatus.QUEUED.value,
         status_url=status_url,
+    )
+
+
+@router.post(
+    "/runs/{thread_id}/pause",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunControlResponse,
+)
+def pause_tender_run(
+    thread_id: str,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+) -> RunControlResponse:
+    repository = OperationRepository(session)
+    operation = repository.get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+        for_update=True,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+    if operation.status in {
+        OperationStatus.PAUSED.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+    }:
+        return RunControlResponse(
+            operation_id=operation.id,
+            thread_id=thread_id,
+            operation_status=operation.status,
+            message="The run is already paused or pausing.",
+        )
+    if operation.status not in {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A {operation.status} run cannot be paused.",
+        )
+
+    repository.request_pause(operation)
+    AuditRepository(session).record(
+        tenant_id=request_context.tenant_id,
+        actor_user_id=request_context.user_id,
+        event_type="tender.understanding.pause_requested",
+        entity_type="operation",
+        entity_id=str(operation.id),
+        after={"status": operation.status},
+    )
+    session.commit()
+    return RunControlResponse(
+        operation_id=operation.id,
+        thread_id=thread_id,
+        operation_status=operation.status,
+        message=(
+            "The run will pause before the next node."
+            if operation.status == OperationStatus.PAUSE_REQUESTED.value
+            else "The queued run was paused."
+        ),
+    )
+
+
+@router.post(
+    "/runs/{thread_id}/resume",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunControlResponse,
+)
+def resume_tender_run(
+    thread_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+    session_factory: Annotated[sessionmaker[Session], Depends(get_session_factory)],
+    graph: Annotated[Any, Depends(get_tender_graph)],
+) -> RunControlResponse:
+    repository = OperationRepository(session)
+    operation = repository.get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+        for_update=True,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+    if operation.status != OperationStatus.PAUSED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A {operation.status} run cannot be resumed.",
+        )
+
+    resume_from_checkpoint = operation.error_code in {
+        "server_restarted",
+        "checkpoint_retry",
+    }
+    graph_config = {"configurable": {"thread_id": thread_id}}
+    checkpoint = graph.get_state(graph_config)
+    has_checkpoint = bool(checkpoint.values)
+
+    if operation.attempt == 0 or not has_checkpoint:
+        graph_input: Any = dict(operation.result_json or {})
+    elif resume_from_checkpoint:
+        graph_input = None
+    else:
+        graph_input = Command(resume={"action": "continue"})
+
+    controlled_pause_resume = (
+        has_checkpoint
+        and operation.attempt > 0
+        and not resume_from_checkpoint
+    )
+    repository.mark_queued_for_resume(operation)
+    AuditRepository(session).record(
+        tenant_id=request_context.tenant_id,
+        actor_user_id=request_context.user_id,
+        event_type="tender.understanding.resume_requested",
+        entity_type="operation",
+        entity_id=str(operation.id),
+        after={"status": operation.status},
+    )
+    session.commit()
+
+    runtime_context = _build_runtime_context(
+        request=request,
+        request_context=request_context,
+        session_factory=session_factory,
+        thread_id=thread_id,
+    )
+    runtime_context["resuming_operator_pause"] = (
+        controlled_pause_resume
+    )
+
+    dispatch_tender_run(
+        background_tasks=background_tasks,
+        operation_id=operation.id,
+        tenant_id=request_context.tenant_id,
+        user_id=request_context.user_id,
+        graph=graph,
+        graph_config=graph_config,
+        graph_input=graph_input,
+        runtime_context=runtime_context,
+        session_factory=session_factory,
+    )
+    return RunControlResponse(
+        operation_id=operation.id,
+        thread_id=thread_id,
+        operation_status=OperationStatus.QUEUED.value,
+        message="The run was queued from its latest checkpoint.",
+    )
+
+
+@router.post(
+    "/runs/{thread_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunControlResponse,
+)
+def cancel_tender_run(
+    thread_id: str,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+) -> RunControlResponse:
+    repository = OperationRepository(session)
+    operation = repository.get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+        for_update=True,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+    if operation.status == OperationStatus.CANCELLED.value:
+        return RunControlResponse(
+            operation_id=operation.id,
+            thread_id=thread_id,
+            operation_status=operation.status,
+            message="The run is already cancelled.",
+        )
+    if operation.status not in {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+        OperationStatus.PAUSED.value,
+        OperationStatus.CANCEL_REQUESTED.value,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A {operation.status} run cannot be cancelled.",
+        )
+
+    if operation.status != OperationStatus.CANCEL_REQUESTED.value:
+        repository.request_cancel(operation)
+        AuditRepository(session).record(
+            tenant_id=request_context.tenant_id,
+            actor_user_id=request_context.user_id,
+            event_type="tender.understanding.cancel_requested",
+            entity_type="operation",
+            entity_id=str(operation.id),
+            after={"status": operation.status},
+        )
+        session.commit()
+    return RunControlResponse(
+        operation_id=operation.id,
+        thread_id=thread_id,
+        operation_status=operation.status,
+        message=(
+            "The run will cancel before the next node."
+            if operation.status == OperationStatus.CANCEL_REQUESTED.value
+            else "The run was cancelled."
+        ),
     )
 
 
@@ -763,6 +989,7 @@ def get_tender_run_status(
     operation_complete = operation.status in {
         OperationStatus.SUCCEEDED.value,
         OperationStatus.FAILED.value,
+        OperationStatus.CANCELLED.value,
         OperationStatus.APPROVED.value,
         OperationStatus.CHANGES_REQUESTED.value,
         OperationStatus.REJECTED.value,
@@ -773,6 +1000,10 @@ def get_tender_run_status(
         thread_id=operation.thread_id,
         request_id=operation.request_id,
         tender_version_id=operation.tender_version_id,
+        heartbeat_at=operation.heartbeat_at,
+        pause_requested_at=operation.pause_requested_at,
+        cancel_requested_at=operation.cancel_requested_at,
+        control_message=operation.error_detail,
         document_ids=(
             state.get("document_ids")
             or [str(document.id) for document in documents]
@@ -1300,6 +1531,10 @@ def get_tender_run_status(
         workflow_status=(
             operation.status
             if operation.status in {
+                OperationStatus.PAUSE_REQUESTED.value,
+                OperationStatus.PAUSED.value,
+                OperationStatus.CANCEL_REQUESTED.value,
+                OperationStatus.CANCELLED.value,
                 OperationStatus.AWAITING_REVIEW.value,
                 OperationStatus.APPROVED.value,
                 OperationStatus.CHANGES_REQUESTED.value,
@@ -1313,6 +1548,17 @@ def get_tender_run_status(
             "review_handoff"
             if operation.status
             == OperationStatus.AWAITING_REVIEW.value
+            else (
+                persisted_result.get("current_node")
+                or state.get("current_node")
+            )
+            if operation.status
+            in {
+                OperationStatus.PAUSE_REQUESTED.value,
+                OperationStatus.PAUSED.value,
+                OperationStatus.CANCEL_REQUESTED.value,
+                OperationStatus.CANCELLED.value,
+            }
             else state.get("current_node")
             or persisted_result.get("current_node")
         ),

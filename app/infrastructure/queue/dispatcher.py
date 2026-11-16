@@ -17,7 +17,7 @@ def dispatch_tender_run(
     user_id: str,
     graph: Any,
     graph_config: dict[str, Any],
-    initial_state: dict[str, Any],
+    graph_input: Any,
     runtime_context: dict[str, Any],
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -28,7 +28,7 @@ def dispatch_tender_run(
         user_id=user_id,
         graph=graph,
         graph_config=graph_config,
-        initial_state=initial_state,
+        graph_input=graph_input,
         runtime_context=runtime_context,
         session_factory=session_factory,
     )

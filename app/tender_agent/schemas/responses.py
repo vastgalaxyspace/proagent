@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -54,11 +55,22 @@ class TenderRunAccepted(BaseModel):
     status_url: str
 
 
+class RunControlResponse(BaseModel):
+    operation_id: UUID
+    thread_id: str
+    operation_status: str
+    message: str
+
+
 class TenderRunStatus(BaseModel):
     operation_id: UUID
     thread_id: str
     request_id: str
     tender_version_id: UUID
+    heartbeat_at: datetime | None = None
+    pause_requested_at: datetime | None = None
+    cancel_requested_at: datetime | None = None
+    control_message: str | None = None
     document_ids: list[str]
     completed_nodes: list[str] = Field(
         default_factory=list
