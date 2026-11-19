@@ -7,7 +7,13 @@ from uuid import UUID
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import get_settings
+from app.infrastructure.providers.usage import (
+    UsagePricing,
+    collect_ai_usage,
+)
 from app.tender_agent.domain.statuses import OperationStatus
+from app.tender_agent.problem_report import write_problem_report
 from app.tender_agent.repositories.audit_repository import (
     AuditRepository,
 )
@@ -58,12 +64,41 @@ def execute_tender_run(
         repository.mark_running(operation)
         session.commit()
 
+    usage_collector = None
     try:
-        result = graph.invoke(
-            graph_input,
-            config=graph_config,
-            context=runtime_context,
+        existing_state = graph.get_state(graph_config).values or {}
+        provider_registry = runtime_context.get("ai_providers")
+        provider_settings = (
+            provider_registry.settings
+            if provider_registry is not None
+            else None
         )
+        pricing = UsagePricing(
+            input_per_million=(
+                provider_settings.input_cost_per_million_tokens
+                if provider_settings is not None
+                else 0.0
+            ),
+            output_per_million=(
+                provider_settings.output_cost_per_million_tokens
+                if provider_settings is not None
+                else 0.0
+            ),
+            embedding_per_million=(
+                provider_settings.embedding_cost_per_million_tokens
+                if provider_settings is not None
+                else 0.0
+            ),
+        )
+        with collect_ai_usage(
+            pricing=pricing,
+            initial=existing_state.get("ai_usage"),
+        ) as usage_collector:
+            result = graph.invoke(
+                graph_input,
+                config=graph_config,
+                context=runtime_context,
+            )
     except Exception as exc:
         logger.exception(
             "Tender graph execution failed operation_id=%s",
@@ -88,6 +123,8 @@ def execute_tender_run(
     result_summary = jsonable_encoder(
         serializable_result
     )
+    if usage_collector is not None:
+        result_summary["ai_usage"] = usage_collector.snapshot()
 
     if interrupt_kind == "operator_pause":
         result_summary["workflow_status"] = "paused"
@@ -162,6 +199,10 @@ def execute_tender_run(
             after=result_summary,
         )
         session.commit()
+        _write_problem_report_safely(
+            operation=operation,
+            result=result_summary,
+        )
 
 
 def _read_interrupt(
@@ -212,11 +253,19 @@ def _mark_execution_failed(
                     reason="execution_stopped_while_pausing",
                 )
                 session.commit()
+                _write_problem_report_safely(
+                    operation=operation,
+                    result=operation.result_json,
+                )
                 return
 
             if operation.status == OperationStatus.CANCEL_REQUESTED.value:
                 operation_repository.mark_cancelled(operation)
                 session.commit()
+                _write_problem_report_safely(
+                    operation=operation,
+                    result=operation.result_json,
+                )
                 return
 
             operation_repository.mark_failed(
@@ -236,8 +285,45 @@ def _mark_execution_failed(
                 },
             )
             session.commit()
+            failure_result = dict(operation.result_json or {})
+            failure_result.setdefault("problem_events", []).append(
+                {
+                    "node": failure_result.get("current_node"),
+                    "severity": "error",
+                    "message": str(error),
+                    "recorded_at": operation.finished_at.isoformat()
+                    if operation.finished_at
+                    else None,
+                }
+            )
+            _write_problem_report_safely(
+                operation=operation,
+                result=failure_result,
+            )
     except Exception:
         logger.exception(
             "Failed to persist tender execution failure: %s",
             operation_id,
+        )
+
+
+def _write_problem_report_safely(
+    *,
+    operation: Any,
+    result: dict[str, Any] | None,
+) -> None:
+    try:
+        write_problem_report(
+            report_root=get_settings().problem_report_root,
+            operation_id=operation.id,
+            thread_id=operation.thread_id,
+            request_id=operation.request_id,
+            tender_version_id=operation.tender_version_id,
+            operation_status=operation.status,
+            result=result,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to write problem report operation_id=%s",
+            operation.id,
         )

@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     field_max_chunk_characters: int = 3500
 
     storage_root: Path = Path("runtime/storage")
+    problem_report_root: Path = Path("runtime/reports")
     normalization_default_currency: str = "INR"
 
     normalization_default_timezone: str = (

@@ -143,6 +143,7 @@ export const getNodeStatus = (node, run) => {
   if (run.failed_node === node.id) return "failed";
   if (run.completed_nodes?.includes(node.id)) return "complete";
   if (run.skipped_nodes?.includes(node.id)) return "skipped";
+  if (run.operation_status === "awaiting_review" && node.id === "review_handoff") return "review";
   if (run.current_node === node.id) return "running";
   if (run.next_nodes?.includes(node.id)) return "waiting";
 

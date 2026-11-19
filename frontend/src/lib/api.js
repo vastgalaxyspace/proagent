@@ -16,6 +16,16 @@ const request = async (path, options = {}, headers = {}) => {
   return response.json();
 };
 
+const download = async (path, headers = {}) => {
+  const response = await fetch(path, {
+    headers: { "X-Tenant-ID": headers.tenantId, "X-User-ID": headers.userId },
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const matchedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  return { blob: await response.blob(), fileName: matchedName || "tender-problems.json" };
+};
+
 export const api = {
   health: () => fetch("/health").then((response) => response.json()),
   readiness: () => fetch("/ready").then(async (response) => {
@@ -33,6 +43,13 @@ export const api = {
   getRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}`, {}, headers),
   pauseRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/pause`, { method: "POST" }, headers),
   resumeRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/resume`, { method: "POST" }, headers),
+  getReplayOptions: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/replay-options`, {}, headers),
+  rerunFromNode: (threadId, nodeName, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/rerun`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_name: nodeName }),
+  }, headers),
+  downloadProblemReport: (threadId, headers) => download(`/v1/tenders/runs/${encodeURIComponent(threadId)}/problem-report`, headers),
   cancelRun: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/cancel`, { method: "POST" }, headers),
   getReview: (threadId, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/review`, {}, headers),
   submitReview: (threadId, payload, headers) => request(`/v1/tenders/runs/${encodeURIComponent(threadId)}/review`, {

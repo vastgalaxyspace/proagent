@@ -30,3 +30,11 @@ class CreateTenderRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
+
+
+class RerunFromNodeRequest(BaseModel):
+    node_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )

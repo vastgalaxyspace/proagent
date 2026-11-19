@@ -45,6 +45,10 @@ def review_handoff_node(
             tenant_id=context["tenant_id"],
             thread_id=context["thread_id"],
             package=package,
+            reset_existing=(
+                context.get("replay_from_node")
+                == "review_handoff"
+            ),
         )
         review_id = review.id
         session.commit()

@@ -103,4 +103,5 @@ class TenderRuntimeContext(TypedDict):
     ]
     handoff_service: NotRequired[HandoffService]
     thread_id: NotRequired[str]
+    replay_from_node: NotRequired[str]
 

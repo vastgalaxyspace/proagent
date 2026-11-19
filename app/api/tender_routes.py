@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 from fastapi import (
@@ -13,6 +14,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from langgraph.types import Command
@@ -107,11 +109,23 @@ from app.tender_agent.schemas.review import (
 )
 from app.tender_agent.repositories.tender_repository import TenderRepository
 from app.tender_agent.schemas.responses import (
+    ReplayableNodeResponse,
+    ReplayOptionsResponse,
     RegisteredDocumentResponse,
     RunControlResponse,
     TenderCreatedResponse,
     TenderRunAccepted,
     TenderRunStatus,
+)
+from app.tender_agent.schemas.commands import RerunFromNodeRequest
+from app.tender_agent.replay import (
+    checkpoint_id_from_config,
+    current_checkpoint_lineage,
+    find_replay_point,
+    replay_points_from_history,
+)
+from app.tender_agent.problem_report import (
+    write_problem_report,
 )
 from app.tender_agent.services.ingestion import (
     IngestionLimits,
@@ -130,6 +144,7 @@ router = APIRouter(
     prefix="/tenders",
     tags=["tender-agent"],
 )
+logger = logging.getLogger(__name__)
 
 
 def _build_runtime_context(
@@ -709,6 +724,217 @@ def resume_tender_run(
     )
 
 
+@router.get(
+    "/runs/{thread_id}/replay-options",
+    response_model=ReplayOptionsResponse,
+)
+def get_replay_options(
+    thread_id: str,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+    graph: Annotated[Any, Depends(get_tender_graph)],
+) -> ReplayOptionsResponse:
+    operation = OperationRepository(session).get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+
+    graph_config = {"configurable": {"thread_id": thread_id}}
+    head = graph.get_state(graph_config)
+    head_checkpoint_id = checkpoint_id_from_config(head.config)
+    history = list(graph.get_state_history(graph_config))
+    points = replay_points_from_history(
+        current_checkpoint_lineage(
+            history,
+            head_checkpoint_id,
+        )
+        if head_checkpoint_id
+        else history
+    )
+    return ReplayOptionsResponse(
+        thread_id=thread_id,
+        nodes=[
+            ReplayableNodeResponse(
+                node_name=point.node_name,
+                checkpoint_id=point.checkpoint_id,
+            )
+            for point in points
+        ],
+    )
+
+
+@router.post(
+    "/runs/{thread_id}/rerun",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunControlResponse,
+)
+def rerun_tender_run_from_node(
+    thread_id: str,
+    command: RerunFromNodeRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+    session_factory: Annotated[sessionmaker[Session], Depends(get_session_factory)],
+    graph: Annotated[Any, Depends(get_tender_graph)],
+) -> RunControlResponse:
+    repository = OperationRepository(session)
+    operation = repository.get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+        for_update=True,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+
+    active_statuses = {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+        OperationStatus.CANCEL_REQUESTED.value,
+    }
+    if operation.status in active_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A {operation.status} run cannot be rerun. "
+                "Pause it or wait for it to stop first."
+            ),
+        )
+
+    graph_config = {"configurable": {"thread_id": thread_id}}
+    head = graph.get_state(graph_config)
+    head_checkpoint_id = checkpoint_id_from_config(head.config)
+    history = list(graph.get_state_history(graph_config))
+    replay_history = (
+        current_checkpoint_lineage(history, head_checkpoint_id)
+        if head_checkpoint_id
+        else history
+    )
+    replay_point = find_replay_point(
+        replay_history,
+        command.node_name,
+    )
+    if replay_point is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"No replayable checkpoint exists before node "
+                f"'{command.node_name}'. The node may have been skipped "
+                "or may belong to a parallel execution step."
+            ),
+        )
+
+    repository.mark_queued_for_resume(operation)
+    operation.result_json = dict(
+        graph.get_state(replay_point.config).values or {}
+    )
+    AuditRepository(session).record(
+        tenant_id=request_context.tenant_id,
+        actor_user_id=request_context.user_id,
+        event_type="tender.understanding.rerun_requested",
+        entity_type="operation",
+        entity_id=str(operation.id),
+        after={
+            "status": operation.status,
+            "from_node": replay_point.node_name,
+            "source_checkpoint_id": replay_point.checkpoint_id,
+        },
+    )
+    session.commit()
+
+    runtime_context = _build_runtime_context(
+        request=request,
+        request_context=request_context,
+        session_factory=session_factory,
+        thread_id=thread_id,
+    )
+    runtime_context["replay_from_node"] = replay_point.node_name
+
+    dispatch_tender_run(
+        background_tasks=background_tasks,
+        operation_id=operation.id,
+        tenant_id=request_context.tenant_id,
+        user_id=request_context.user_id,
+        graph=graph,
+        graph_config=replay_point.config,
+        graph_input=None,
+        runtime_context=runtime_context,
+        session_factory=session_factory,
+    )
+    return RunControlResponse(
+        operation_id=operation.id,
+        thread_id=thread_id,
+        operation_status=OperationStatus.QUEUED.value,
+        message=(
+            f"The run was queued from node "
+            f"'{replay_point.node_name}'."
+        ),
+    )
+
+
+@router.get(
+    "/runs/{thread_id}/problem-report",
+    response_class=FileResponse,
+)
+def download_tender_run_problem_report(
+    thread_id: str,
+    request_context: Annotated[RequestContext, Depends(get_request_context)],
+    session: Annotated[Session, Depends(get_database_session)],
+    graph: Annotated[Any, Depends(get_tender_graph)],
+) -> FileResponse:
+    operation = OperationRepository(session).get_by_thread(
+        thread_id=thread_id,
+        tenant_id=request_context.tenant_id,
+    )
+    if operation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tender Agent run was not found.",
+        )
+
+    active_statuses = {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+        OperationStatus.CANCEL_REQUESTED.value,
+    }
+    if operation.status in active_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The problem report is available after the run stops.",
+        )
+
+    snapshot = graph.get_state(
+        {"configurable": {"thread_id": thread_id}}
+    )
+    report_state = dict(operation.result_json or {})
+    report_state.update(snapshot.values or {})
+    settings = get_settings()
+    path = write_problem_report(
+        report_root=settings.problem_report_root,
+        operation_id=operation.id,
+        thread_id=operation.thread_id,
+        request_id=operation.request_id,
+        tender_version_id=operation.tender_version_id,
+        operation_status=operation.status,
+        result=report_state,
+    )
+    return FileResponse(
+        path=path,
+        media_type="application/json",
+        filename=f"tender-problems-{operation.request_id}.json",
+    )
+
+
 @router.post(
     "/runs/{thread_id}/cancel",
     status_code=status.HTTP_202_ACCEPTED,
@@ -920,6 +1146,21 @@ def decide_tender_review(
         result=result_summary,
     )
     session.commit()
+    try:
+        write_problem_report(
+            report_root=get_settings().problem_report_root,
+            operation_id=operation.id,
+            thread_id=operation.thread_id,
+            request_id=operation.request_id,
+            tender_version_id=operation.tender_version_id,
+            operation_status=operation.status,
+            result=result_summary,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to update problem report operation_id=%s",
+            operation.id,
+        )
 
     return ReviewDecisionResponse(
         review_session_id=review.id,
@@ -938,6 +1179,7 @@ def decide_tender_review(
 )
 def get_tender_run_status(
     thread_id: str,
+    request: Request,
     request_context: Annotated[
         RequestContext,
         Depends(get_request_context),
@@ -994,6 +1236,32 @@ def get_tender_run_status(
         OperationStatus.CHANGES_REQUESTED.value,
         OperationStatus.REJECTED.value,
     }
+    problem_report_available = operation.status not in {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+        OperationStatus.CANCEL_REQUESTED.value,
+    }
+    next_nodes = list(snapshot.next)
+    actively_executing = operation.status in {
+        OperationStatus.QUEUED.value,
+        OperationStatus.RUNNING.value,
+        OperationStatus.PAUSE_REQUESTED.value,
+        OperationStatus.CANCEL_REQUESTED.value,
+    }
+    if operation.status == OperationStatus.AWAITING_REVIEW.value:
+        reported_current_node = "review_handoff"
+    elif actively_executing and next_nodes:
+        # A checkpoint contains the state before its pending task. While the
+        # worker is executing, that pending task is the current visible node.
+        reported_current_node = next_nodes[0]
+    elif operation.status == OperationStatus.PAUSED.value and next_nodes:
+        reported_current_node = next_nodes[0]
+    else:
+        reported_current_node = (
+            state.get("current_node")
+            or persisted_result.get("current_node")
+        )
 
     return TenderRunStatus(
         operation_id=operation.id,
@@ -1032,6 +1300,25 @@ def get_tender_run_status(
                 "node_events",
                 [],
             )
+        ),
+        problem_events=(
+            state.get("problem_events")
+            or persisted_result.get("problem_events", [])
+        ),
+        problem_report_available=problem_report_available,
+        problem_report_url=(
+            str(
+                request.url_for(
+                    "download_tender_run_problem_report",
+                    thread_id=thread_id,
+                )
+            )
+            if problem_report_available
+            else None
+        ),
+        ai_usage=(
+            state.get("ai_usage")
+            or persisted_result.get("ai_usage", {})
         ),
         retrieval_index_completed=(
             state.get("retrieval_index_completed")
@@ -1544,26 +1831,9 @@ def get_tender_run_status(
             or persisted_result.get("workflow_status")
             or operation.status
         ),
-        current_node=(
-            "review_handoff"
-            if operation.status
-            == OperationStatus.AWAITING_REVIEW.value
-            else (
-                persisted_result.get("current_node")
-                or state.get("current_node")
-            )
-            if operation.status
-            in {
-                OperationStatus.PAUSE_REQUESTED.value,
-                OperationStatus.PAUSED.value,
-                OperationStatus.CANCEL_REQUESTED.value,
-                OperationStatus.CANCELLED.value,
-            }
-            else state.get("current_node")
-            or persisted_result.get("current_node")
-        ),
+        current_node=reported_current_node,
         next_action=state.get("next_action"),
-        next_nodes=list(snapshot.next),
+        next_nodes=next_nodes,
         native_extraction_completed=(
             state.get("native_extraction_completed")
             or persisted_result.get(

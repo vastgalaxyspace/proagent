@@ -88,6 +88,11 @@ class TenderAgentState(TypedDict, total=False):
         list[dict[str, Any]],
         operator.add,
     ]
+    problem_events: Annotated[
+        list[dict[str, Any]],
+        operator.add,
+    ]
+    ai_usage: dict[str, Any]
 
     owner_tenant_id: str
     started_by_user_id: str

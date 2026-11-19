@@ -62,6 +62,18 @@ class RunControlResponse(BaseModel):
     message: str
 
 
+class ReplayableNodeResponse(BaseModel):
+    node_name: str
+    checkpoint_id: str
+
+
+class ReplayOptionsResponse(BaseModel):
+    thread_id: str
+    nodes: list[ReplayableNodeResponse] = Field(
+        default_factory=list
+    )
+
+
 class TenderRunStatus(BaseModel):
     operation_id: UUID
     thread_id: str
@@ -82,6 +94,12 @@ class TenderRunStatus(BaseModel):
     node_events: list[dict[str, Any]] = Field(
         default_factory=list
     )
+    problem_events: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    problem_report_available: bool = False
+    problem_report_url: str | None = None
+    ai_usage: dict[str, Any] = Field(default_factory=dict)
     retrieval_index_completed: bool = False
     retrieval_index_id: str | None = None
     retrieval_chunk_count: int = 0

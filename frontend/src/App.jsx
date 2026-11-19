@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertCircle, ArrowRight, Check, CheckCircle2, Circle,
-  Cpu, DollarSign, FileText, Loader2, Pause, Play, RotateCcw, Square,
+  ClipboardCheck, Cpu, DollarSign, Download, FileText, Loader2, Pause, Play, RotateCcw, Square,
   UploadCloud, X,
 } from "lucide-react";
 import { api } from "./lib/api.js";
 import { getNodeStatus, workflowNodes } from "./data/workflow.js";
+import { ReviewPanel } from "./components/ReviewPanel.jsx";
 
 const defaultHeaders = { tenantId: "demo-tenant", userId: "developer" };
 
@@ -31,12 +32,13 @@ const pretty = (value) => {
 
 const statusLabel = {
   complete: "Complete", running: "Working", waiting: "Next",
-  failed: "Failed", skipped: "Skipped", idle: "Waiting",
+  failed: "Failed", skipped: "Skipped", review: "Needs review", idle: "Waiting",
 };
 
 function StatusIcon({ status }) {
   if (status === "complete") return <Check size={13} />;
   if (status === "running") return <Loader2 className="spin" size={13} />;
+  if (status === "review") return <ClipboardCheck size={13} />;
   if (status === "failed") return <AlertCircle size={13} />;
   return <Circle size={10} />;
 }
@@ -144,23 +146,31 @@ function UploadScreen({ readiness, onLaunch, onAttach, busy, error }) {
   );
 }
 
-function RunScreen({ readiness, run, threadId, starting, error, onReset, onControl, controlBusy }) {
+function RunScreen({ readiness, run, threadId, headers, starting, error, onReset, onControl, onRerun, onDownloadProblems, onRefresh, replayableNodes, controlBusy }) {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const nodeStates = useMemo(() => workflowNodes.map((node) => ({ node, status: getNodeStatus(node, run) })), [run]);
+  const visibleRun = useMemo(() => {
+    if (!run) return run;
+    const activeStatuses = ["queued", "running", "pause_requested", "cancel_requested"];
+    const activeNodeId = activeStatuses.includes(run.operation_status)
+      ? run.next_nodes?.[0] || run.current_node
+      : run.current_node;
+    return { ...run, current_node: activeNodeId };
+  }, [run]);
+  const nodeStates = useMemo(() => workflowNodes.map((node) => ({ node, status: getNodeStatus(node, visibleRun) })), [visibleRun]);
   const liveNode = useMemo(() => {
-    if (!run) return workflowNodes[0];
+    if (!visibleRun) return workflowNodes[0];
     const id = (
-      run.failed_node
-      || run.current_node
-      || run.next_nodes?.[0]
+      visibleRun.failed_node
+      || visibleRun.current_node
+      || visibleRun.next_nodes?.[0]
     );
     return workflowNodes.find((node) => node.id === id)
       || [...nodeStates].reverse().find((item) => item.status === "complete")?.node
       || workflowNodes[0];
-  }, [run, nodeStates]);
+  }, [visibleRun, nodeStates]);
   const activeNode = workflowNodes.find((node) => node.id === selectedNodeId) || liveNode;
-  const activeStatus = starting && !run && activeNode.id === liveNode.id ? "running" : getNodeStatus(activeNode, run);
-  const liveStatus = starting && !run ? "running" : getNodeStatus(liveNode, run);
+  const activeStatus = starting && !visibleRun && activeNode.id === liveNode.id ? "running" : getNodeStatus(activeNode, visibleRun);
+  const liveStatus = starting && !visibleRun ? "running" : getNodeStatus(liveNode, visibleRun);
   const completeCount = nodeStates.filter((item) => item.status === "complete").length;
   const skippedCount = nodeStates.filter((item) => item.status === "skipped").length;
   const processedCount = completeCount + skippedCount;
@@ -171,6 +181,31 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset, onContr
   const canResume = operationStatus === "paused";
   const canCancel = ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(operationStatus);
   const operationLabel = operationStatus.replaceAll("_", " ");
+  const executingNode = ["running", "pause_requested", "cancel_requested"].includes(operationStatus);
+  const nodeActivityLabel = operationStatus === "pause_requested"
+    ? "PAUSE REQUESTED · FINISHING CURRENT NODE"
+    : operationStatus === "cancel_requested"
+      ? "CANCEL REQUESTED · FINISHING CURRENT NODE"
+      : "CURRENTLY RUNNING";
+  const canRerunSelected = Boolean(
+    selectedNodeId && replayableNodes.includes(selectedNodeId)
+  );
+  const problemEvents = useMemo(() => {
+    if (run?.problem_events?.length) return run.problem_events;
+    return [
+      ...(run?.warnings || []).map((message) => ({ node: null, severity: "warning", message })),
+      ...(run?.errors || []).map((message) => ({ node: run?.failed_node || null, severity: "error", message })),
+    ];
+  }, [run]);
+  const aiUsage = run?.ai_usage || {};
+  const totalTokens = Number(aiUsage.total_tokens || 0);
+  const estimatedCost = aiUsage.estimated_cost_usd;
+  const usageHeadline = estimatedCost !== null && estimatedCost !== undefined
+    ? `$${Number(estimatedCost).toFixed(6)}`
+    : `${totalTokens.toLocaleString()} tokens`;
+  const usageDetail = totalTokens > 0
+    ? `${Number(aiUsage.input_tokens || 0).toLocaleString()} input · ${Number(aiUsage.output_tokens || 0).toLocaleString()} output · ${Number(aiUsage.request_count || 0).toLocaleString()} requests${aiUsage.pricing_configured ? "" : " · pricing not configured"}`
+    : "No provider usage received yet";
 
   return (
     <div className="run-page">
@@ -181,7 +216,7 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset, onContr
         </div>
         <div className="header-summary">
           <div className="model-chip"><Cpu size={15} /><span>Model<strong>{readiness?.main_llm_model || "Not reported"}</strong></span></div>
-          <div className="cost-chip"><DollarSign size={15} /><span>Run cost<strong>Not reported</strong><small>API has no token usage yet</small></span></div>
+          <div className="cost-chip"><DollarSign size={15} /><span>AI usage<strong>{usageHeadline}</strong><small>{usageDetail}</small></span></div>
           <div className="run-controls" aria-label="Agent controls">
             {canPause && <button className="run-control pause" disabled={Boolean(controlBusy)} onClick={() => onControl("pause")}><Pause size={14} />{controlBusy === "pause" ? "Pausing…" : "Pause"}</button>}
             {operationStatus === "pause_requested" && <button className="run-control pause" disabled><Loader2 className="spin" size={14} />Pausing…</button>}
@@ -234,15 +269,42 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset, onContr
           {run?.control_message && operationStatus === "paused" && (
             <div className="run-notice"><Pause size={17} /><div><strong>Run paused</strong><span>{run.control_message}</span></div></div>
           )}
+          {operationStatus === "awaiting_review" && (
+            <div className="review-waiting-strip">
+              <span><ClipboardCheck size={19} /></span>
+              <div><small>HUMAN DECISION REQUIRED</small><strong>This node is waiting for your review—it is not still processing.</strong></div>
+            </div>
+          )}
+          {executingNode && (
+            <div className={`current-node-strip ${operationStatus}`}>
+              <span className="current-node-spinner"><Loader2 className="spin" size={18} /></span>
+              <div>
+                <small>{nodeActivityLabel}</small>
+                <strong>{liveNode.label}</strong>
+                <code>{liveNode.id}</code>
+              </div>
+            </div>
+          )}
+
+          {operationStatus === "awaiting_review" && (
+            <ReviewPanel run={run} threadId={threadId} headers={headers} onCompleted={onRefresh} />
+          )}
 
           <section className="active-node-card">
             <div className="node-card-header">
               <span className={`large-node-icon ${activeStatus}`}><StatusIcon status={activeStatus} /></span>
               <div><p>{selectedNodeId ? "SELECTED NODE" : "CURRENT NODE"}</p><h1>{activeNode.label}</h1><code>{activeNode.id}</code></div>
               {selectedNodeId && (
-                <button className="follow-live-button" type="button" onClick={() => setSelectedNodeId(null)}>
-                  <Activity size={13} /> Follow live node
-                </button>
+                <div className="node-card-actions">
+                  {canRerunSelected && (
+                    <button className="rerun-node-button" type="button" disabled={Boolean(controlBusy)} onClick={() => onRerun(selectedNodeId)}>
+                      <RotateCcw size={13} />{controlBusy === "rerun" ? "Starting…" : "Rerun from here"}
+                    </button>
+                  )}
+                  <button className="follow-live-button" type="button" onClick={() => setSelectedNodeId(null)}>
+                    <Activity size={13} /> Follow live node
+                  </button>
+                </div>
               )}
             </div>
             <p className="node-description">{activeNode.summary}</p>
@@ -266,10 +328,26 @@ function RunScreen({ readiness, run, threadId, starting, error, onReset, onContr
             ) : <p className="empty-output">This node has no reportable output yet.</p>}
           </section>
 
-          {(run?.warnings?.length > 0 || run?.errors?.length > 0) && (
+          {(problemEvents.length > 0 || run?.problem_report_available) && (
             <section className="messages-card">
-              {run.errors?.map((message) => <p className="error-line" key={message}><AlertCircle size={15} />{message}</p>)}
-              {run.warnings?.map((message) => <p className="warning-line" key={message}><AlertCircle size={15} />{message}</p>)}
+              <div className="problem-heading">
+                <div><span>RUN PROBLEMS</span><h2>Warnings and errors from every node</h2></div>
+                {run?.problem_report_available && (
+                  <button type="button" disabled={controlBusy === "download"} onClick={onDownloadProblems}>
+                    {controlBusy === "download" ? <Loader2 className="spin" size={14} /> : <Download size={14} />}
+                    {controlBusy === "download" ? "Preparing…" : "Download JSON"}
+                  </button>
+                )}
+              </div>
+              <div className="problem-list">
+                {problemEvents.map((problem, index) => (
+                  <div className={`problem-row ${problem.severity}`} key={`${problem.node || "run"}-${problem.severity}-${index}-${problem.message}`}>
+                    <AlertCircle size={15} />
+                    <div><small>{problem.node || "Run"} · {problem.severity}</small><p>{problem.message}</p></div>
+                  </div>
+                ))}
+                {problemEvents.length === 0 && <p className="no-problems">No warnings or errors were recorded.</p>}
+              </div>
             </section>
           )}
         </main>
@@ -288,6 +366,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const [controlBusy, setControlBusy] = useState("");
+  const [replayableNodes, setReplayableNodes] = useState([]);
   const [error, setError] = useState("");
 
   const checkReadiness = useCallback(() => {
@@ -308,6 +387,12 @@ export default function App() {
     try {
       const next = await api.getRun(threadId, headers);
       setRun(next);
+      if (["queued", "running", "pause_requested", "cancel_requested"].includes(next.operation_status)) {
+        setReplayableNodes([]);
+      } else {
+        const options = await api.getReplayOptions(threadId, headers);
+        setReplayableNodes(options.nodes.map((item) => item.node_name));
+      }
       setError("");
     } catch (reason) { setError(reason.message); }
   }, [threadId, headers]);
@@ -353,13 +438,38 @@ export default function App() {
     finally { setControlBusy(""); }
   };
 
+  const rerunFromNode = async (nodeName) => {
+    if (!threadId || controlBusy) return;
+    if (!window.confirm(`Rerun from ${nodeName}? Results from this node onward will be produced again.`)) return;
+    setControlBusy("rerun"); setError("");
+    try {
+      await api.rerunFromNode(threadId, nodeName, headers);
+      setReplayableNodes([]);
+      await refresh();
+    } catch (reason) { setError(reason.message); }
+    finally { setControlBusy(""); }
+  };
+
+  const downloadProblems = async () => {
+    if (!threadId || controlBusy) return;
+    setControlBusy("download"); setError("");
+    try {
+      const { blob, fileName } = await api.downloadProblemReport(threadId, headers);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = fileName; anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) { setError(reason.message); }
+    finally { setControlBusy(""); }
+  };
+
   const reset = () => {
-    setScreen("upload"); setThreadId(""); setRun(null); setStarting(false); setControlBusy(""); setError("");
+    setScreen("upload"); setThreadId(""); setRun(null); setStarting(false); setControlBusy(""); setReplayableNodes([]); setError("");
     localStorage.removeItem("proagent.threadId");
     localStorage.removeItem("proagent.run");
   };
 
   return screen === "upload"
     ? <UploadScreen readiness={readiness} onLaunch={launch} onAttach={attach} busy={busy} error={error} />
-    : <RunScreen readiness={readiness} run={run} threadId={threadId} starting={starting} error={error} onReset={reset} onControl={controlRun} controlBusy={controlBusy} />;
+    : <RunScreen readiness={readiness} run={run} threadId={threadId} headers={headers} starting={starting} error={error} onReset={reset} onControl={controlRun} onRerun={rerunFromNode} onDownloadProblems={downloadProblems} onRefresh={refresh} replayableNodes={replayableNodes} controlBusy={controlBusy} />;
 }

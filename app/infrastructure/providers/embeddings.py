@@ -1,10 +1,63 @@
 from __future__ import annotations
 
+import logging
 import math
-from typing import Protocol
+from typing import Any, Protocol, Sequence
 
 from app.infrastructure.providers.client import build_ai_client
 from app.infrastructure.providers.settings import AIProviderSettings
+from app.infrastructure.providers.usage import record_ai_usage
+
+
+logger = logging.getLogger(__name__)
+
+
+def _order_embedding_items(
+    items: Sequence[Any],
+    *,
+    expected_count: int,
+) -> list[Any]:
+    """Return provider embeddings in input order.
+
+    OpenAI-compatible providers do not consistently populate the optional
+    response ``index``. Use it only when the complete batch contains a valid
+    permutation; otherwise retain the provider's response order, matching the
+    compatibility behavior used by the previous procurement service.
+    """
+
+    ordered_items = list(items)
+
+    if len(ordered_items) != expected_count:
+        raise RuntimeError(
+            "Embedding provider returned an incomplete batch."
+        )
+
+    indices = [
+        getattr(item, "index", None)
+        for item in ordered_items
+    ]
+    has_complete_integer_indices = all(
+        isinstance(index, int)
+        and not isinstance(index, bool)
+        for index in indices
+    )
+
+    if not has_complete_integer_indices:
+        logger.warning(
+            "Embedding provider returned missing or non-integer "
+            "response indexes; preserving provider response order."
+        )
+        return ordered_items
+
+    if set(indices) != set(range(expected_count)):
+        raise RuntimeError(
+            "Embedding provider returned invalid response indexes."
+        )
+
+    return sorted(
+        ordered_items,
+        key=lambda item: item.index,
+    )
 
 
 class EmbeddingProvider(Protocol):
@@ -64,19 +117,20 @@ class APIEmbeddingProvider:
                 model=self.model,
                 input=batch,
             )
-            ordered_items = sorted(
+            record_ai_usage(
+                response=response,
+                provider=self.name,
+                model=self.model,
+                capability="embedding",
+            )
+            ordered_items = _order_embedding_items(
                 response.data,
-                key=lambda item: item.index,
+                expected_count=len(batch),
             )
             received = [
                 self._validate_vector(item.embedding)
                 for item in ordered_items
             ]
-
-            if len(received) != len(batch):
-                raise RuntimeError(
-                    "Embedding provider returned an incomplete batch."
-                )
 
             vectors.extend(received)
 

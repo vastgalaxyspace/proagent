@@ -13,6 +13,7 @@ from app.tender_agent.repositories.operation_repository import (
     OperationRepository,
 )
 from app.tender_agent.state import TenderAgentState
+from app.infrastructure.providers.usage import current_ai_usage
 
 
 def _check_operation_control(
@@ -149,6 +150,24 @@ def tracked_node(
             )
 
         update["node_events"] = events
+        problem_events: list[dict[str, Any]] = []
+        for severity, key in (
+            ("warning", "warnings"),
+            ("error", "errors"),
+        ):
+            for message in update.get(key, []):
+                problem_events.append(
+                    {
+                        "node": node_name,
+                        "severity": severity,
+                        "message": str(message),
+                        "recorded_at": finished_at.isoformat(),
+                    }
+                )
+        update["problem_events"] = problem_events
+        ai_usage = current_ai_usage()
+        if ai_usage is not None:
+            update["ai_usage"] = ai_usage
 
         if node_failed:
             update["failed_node"] = node_name

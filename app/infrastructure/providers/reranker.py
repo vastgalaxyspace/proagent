@@ -9,6 +9,7 @@ from app.infrastructure.providers.json_protocol import (
     parse_json_object,
 )
 from app.infrastructure.providers.settings import AIProviderSettings
+from app.infrastructure.providers.usage import record_ai_usage
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,12 @@ class APIRerankerProvider:
                 "return_documents": False,
             },
         )
+        record_ai_usage(
+            response=response,
+            provider=self.name,
+            model=self.model,
+            capability="reranker",
+        )
 
         if not isinstance(response, dict):
             raise RuntimeError(
@@ -153,6 +160,12 @@ class APIRerankerProvider:
                     "content": json.dumps(payload, ensure_ascii=True),
                 },
             ],
+        )
+        record_ai_usage(
+            response=response,
+            provider=self.name,
+            model=self.model,
+            capability="reranker",
         )
         content = response.choices[0].message.content
 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database.models import (
@@ -56,6 +56,7 @@ class ReviewRepository:
         tenant_id: str,
         thread_id: str,
         package: dict[str, Any],
+        reset_existing: bool = False,
     ) -> TenderReviewSession:
         existing = self.session.scalar(
             select(TenderReviewSession).where(
@@ -65,6 +66,23 @@ class ReviewRepository:
         if existing is not None:
             if existing.tenant_id != tenant_id or existing.thread_id != thread_id:
                 raise ValueError("Finalization is already attached to another review run.")
+            if reset_existing:
+                self.session.execute(
+                    delete(TenderReviewCorrection).where(
+                        TenderReviewCorrection.review_session_id
+                        == existing.id
+                    )
+                )
+                existing.status = "awaiting_review"
+                existing.package_json = package
+                existing.original_profile_json = finalization.profile_json
+                existing.corrected_profile_json = None
+                existing.decision = None
+                existing.comment = None
+                existing.reviewer_user_id = None
+                existing.correction_count = 0
+                existing.reviewed_at = None
+                self.session.flush()
             return existing
 
         review = TenderReviewSession(

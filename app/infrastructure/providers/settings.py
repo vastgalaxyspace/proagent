@@ -56,6 +56,9 @@ class AIProviderSettings(BaseSettings):
     reranker_request_timeout_seconds: int = 240
     verifier_request_timeout_seconds: int = 240
     max_retries: int = 2
+    input_cost_per_million_tokens: float = 0.0
+    output_cost_per_million_tokens: float = 0.0
+    embedding_cost_per_million_tokens: float = 0.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

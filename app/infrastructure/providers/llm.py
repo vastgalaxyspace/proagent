@@ -7,6 +7,7 @@ from app.infrastructure.providers.json_protocol import (
     parse_json_object,
 )
 from app.infrastructure.providers.settings import AIProviderSettings
+from app.infrastructure.providers.usage import record_ai_usage
 
 
 LLMCapability = Literal["primary", "verifier"]
@@ -80,6 +81,12 @@ class APILLMProvider:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        record_ai_usage(
+            response=response,
+            provider=self.name,
+            model=self.settings.model_for(self.capability, deep=deep),
+            capability=self.capability,
+        )
         content = response.choices[0].message.content
 
         if not content:
@@ -112,6 +119,12 @@ class APILLMProvider:
                 },
                 {"role": "user", "content": user_prompt},
             ],
+        )
+        record_ai_usage(
+            response=response,
+            provider=self.name,
+            model=self.settings.model_for(self.capability, deep=deep),
+            capability=self.capability,
         )
         content = response.choices[0].message.content
 
